@@ -1,0 +1,6 @@
+/bin/
+/ggo/.env
+/.venv/
+/ggo.egg-info/
+/.idea/
+**/__pycache__/*

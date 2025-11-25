@@ -1,0 +1,31 @@
+# tests/test_captures.py
+import pytest
+from ggo.goban_model import Board
+
+def test_single_capture():
+    b = Board(size=3)
+    # setup: W at (1,1) surrounded by B
+    b.play('B', (0,1))
+    b.play('W', (2,2))  # irrelevant
+    b.play('B', (1,0))
+    b.play('W', (2,1))
+    b.play('B', (1,2))
+    # now B plays (2,0) to surround? simpler: place B at (1,1) capture W at (1,1) scenario:
+    # reset small scenario
+    b = Board(size=3)
+    b.play('B', (0,1))
+    b.play('W', (2,2))
+    b.play('B', (1,0))
+    b.play('W', (2,1))
+    b.play('B', (1,2))
+    # place W at (1,1) earlier to be captured
+    b = Board(size=3)
+    b.play('W', (1,1))
+    b.play('B', (0,1))
+    b.play('W', (2,2))
+    b.play('B', (1,0))
+    b.play('W', (2,1))
+    b.play('B', (1,2))
+    # now W at (1,1) has 0 libs and should be captured
+    # After last move capture should have happened
+    assert b.get((1,1)) is None

@@ -88,12 +88,12 @@ LINE_WIDTH_FACTOR = getf("LINE_WIDTH_FACTOR", 0.03)
 NEUTRAL_OUTSIDE = tuple(float(x) for x in gets("NEUTRAL_OUTSIDE", "0.92,0.92,0.92").split(","))
 # BOARD_BG = tuple(float(x) / 100 for x in gets("BOARD_BG", "63.1,58.7,49.3").split(","))
 BOARD_BG = get_rgb("BOARD_BG",
-                    #"#CB7324"
-                    #"#B2611A"
-                    "#C0742A"
-                    #"#BA6B21"
-                    #"#C68038"
-                    #"#A55412"
+                   # "#CB7324"
+                   # "#B2611A"
+                   "#C0742A"
+                   # "#BA6B21"
+                   # "#C68038"
+                   # "#A55412"
                    )
 LINE_COLOR = tuple(float(x) for x in gets("LINE_COLOR", "0.08,0.08,0.08").split(","))
 STAR_COLOR = tuple(float(x) for x in gets("STAR_COLOR", "0.08,0.08,0.08").split(","))
@@ -153,13 +153,274 @@ def draw_text_cr(cr: cairo.Context, x: float, y: float, text: str,
 
 
 # Goban class
+def increase_size(coords: Tuple[float, float, float, float], increase: Tuple[float, float],
+                  increase_coeff: int = 1) -> Tuple[float, float, float, float]:
+    return tuple(i + j * coeff * increase_coeff for i, j, coeff in zip(coords, increase * 2, (-1, -1, 2, 2)))
+
+
+def shift(coords: Tuple[float, float, float, float], increase: Tuple[float, float],
+          increase_coeff: int = 1) -> Tuple[float, float, float, float]:
+    return tuple(i + j * increase_coeff for i, j in zip(coords, increase + (0, 0)))
+
+
+def compute_font_size_from_cell(cell: float) -> int:
+    # compute font size
+    font_px = max(10, int(round(cell * FONT_SCALE)))
+    return font_px
+
+
+def row_labels(size: int) -> list[str]:
+    return [str(size - i) for i in range(size)]
+
+
+def compute_text_sizes(cr: cairo.Context, board_size: int, font_size: int):
+    layout = create_layout(cr, font_size, '')
+    dimensions = []
+    y_offset_top = None
+    y_offset_bottom = None
+    for texts, dimension_index in [
+        (row_labels(board_size), 0),
+        ([''.join(column_labels(board_size))], 1),
+    ]:
+        max_dimension = float('-inf')
+        for text in texts:
+            layout.set_text(text, -1)
+            w, h = layout.get_pixel_size()
+            if dimension_index == 0:
+                # print([
+                #     (i.x, i.y, i.width, i.height)
+                #     for i in layout.get_pixel_extents()
+                # ], file=sys.stderr)
+                # print((w, h), text, file=sys.stderr)
+                dimension = (w, h)[dimension_index]
+            else:
+                ink_rect = layout.get_pixel_extents().ink_rect
+                dimension = ink_rect.height
+                y_offset_top = ink_rect.y
+                y_offset_bottom = h - (ink_rect.y + ink_rect.height)
+            if dimension > max_dimension:
+                max_dimension = dimension
+        dimensions.append(max_dimension)
+    return tuple(dimensions) + (y_offset_top, y_offset_bottom)
+
+
+def compute_cell_size(cr: cairo.Context, board_size: int, width: int, height: int):
+    # margin + margin + letters + (margin + margin + 19)*cell_size = w_h_size
+    # letters = cell*font_size_ratio*letters_coeff
+    letters_coefficients = [i / 100 for i in compute_text_sizes(cr, board_size, 100)[:2]]
+    cell_size = min(
+        (dimension - margin * 2 - padding * 2) / (
+                board_size + margin_relative * 2 + padding_relative * 2 + letter_relative * 2)
+        for dimension, margin, padding, margin_relative, padding_relative, letter_relative in (
+            zip(
+                [width, height],
+                [OUTER_MARGIN_FIXED] * 2,
+                [INNER_PADDING_FIXED] * 2,
+                [OUTER_MARGIN_RELATIVE] * 2,
+                [INNER_PADDING_RELATIVE] * 2,
+                letters_coefficients,
+            )
+        )
+    )
+    font_size = compute_font_size_from_cell(cell_size)
+    letters_dimensions = compute_text_sizes(cr, board_size, font_size)
+    cell_size = min(
+        (dimension - margin * 2 - padding * 2 - letters_dimension * 2) / (
+                board_size + margin_relative * 2 + padding_relative * 2)
+        for dimension, margin, padding, letters_dimension, margin_relative, padding_relative in (
+            zip(
+                [width, height],
+                [OUTER_MARGIN_FIXED] * 2,
+                [INNER_PADDING_FIXED] * 2,
+                letters_dimensions[:2],
+                [OUTER_MARGIN_RELATIVE] * 2,
+                [INNER_PADDING_RELATIVE] * 2,
+            )
+        )
+    )
+    return cell_size, font_size, letters_dimensions
+
+
+def grid_from_cell_and_stone_place(board_size: int, cell: float, stone_left: float, stone_top: float) -> tuple[
+    float, float, float, float, float, float, float, float]:
+    # grid intersections origin (top-left) is half-cell inside stone_area
+    half = cell / 2.0
+    x0 = stone_left + half
+    y0 = stone_top + half
+    grid_span = (board_size - 1) * cell
+    grid_left = x0
+    grid_top = y0
+    grid_right = x0 + grid_span
+    grid_bottom = y0 + grid_span
+    grid = (grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span)
+    return grid
+
+
+def compute_layout(cr: cairo.Context, board_size: int, width: int, height: int):
+    cell_size, font_size, letters_dimensions = compute_cell_size(cr, board_size, width, height)
+    board = (0, 0, cell_size * board_size, cell_size * board_size)
+    board_with_padding = increase_size(board, (INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell_size,) * 2)
+    labels = increase_size(board_with_padding, letters_dimensions[:2])
+    overall = increase_size(labels, (OUTER_MARGIN_FIXED + OUTER_MARGIN_RELATIVE * cell_size,) * 2)
+    start = tuple((i - j) / 2 for i, j in zip([width, height], overall[2:]))
+    shift_back_amount: Tuple[float, float] = tuple(i - j for i, j in zip(start, overall[:2]))
+    # print(board, board_with_padding, labels, overall, (width, height), start, file=sys.stderr, sep='\n')
+    board_shifted = shift(board, shift_back_amount)
+    return {
+        "viewport": shift(overall, shift_back_amount),  # (vp_left, vp_top, vp_w, vp_h),
+        "labels_area": shift(labels, shift_back_amount),  # (labels_left, labels_top, labels_w, labels_h),
+        "stone_area": board_shifted,  # (stone_left, stone_top, stone_side, stone_side),
+        "grid": grid_from_cell_and_stone_place(board_size, cell_size, *(board_shifted[:2])),
+        "font_px": font_size,  # font_px,
+        "letters_dimensions": letters_dimensions,
+    }
+
+
+def draw_dashed_rectangle(cr: cairo.Context, labels_left: float, labels_top: float, labels_w: float,
+                          labels_h: float):
+    cr.set_source_rgb(*BORDER_COLOR)
+    cr.set_line_width(1.0)
+    cr.set_dash([4.0, 3.0])
+    cr.rectangle(labels_left + 0.5, labels_top + 0.5, labels_w - 1.0, labels_h - 1.0)
+    cr.stroke()
+    cr.set_dash([])
+
+
+# Modular draw functions
+
+def draw_stones(cr: cairo.Context, board_size: int, layout, stones: List):
+    grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
+    stone_r = cell * STONE_RADIUS_FACTOR
+    line_width = max(1.0, cell * LINE_WIDTH_FACTOR)
+    for r, c, color in stones:
+        cx = x0 + c * cell
+        cy = y0 + r * cell
+        if color == "black":
+            cr.set_source_rgb(*STONE_BLACK)
+            cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
+            cr.fill()
+        else:
+            cr.set_source_rgb(*STONE_WHITE)
+            cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
+            cr.fill_preserve()
+            cr.set_source_rgb(0, 0, 0)
+            cr.set_line_width(max(1.0, line_width * 0.9))
+            cr.stroke()
+
+
+def draw_labels(cr: cairo.Context, board_size: int, layout):
+    grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
+    stone_left, stone_top, stone_side, _ = layout["stone_area"]
+    labels_left, labels_top, labels_w, labels_h = layout["labels_area"]
+    font_px = layout["font_px"]
+    letters_width, letters_height, y_offset_top, y_offset_bottom = layout["letters_dimensions"]
+
+    # row labels left/right inside stone area (inset)
+    padding = INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell
+    left_x = (stone_left + labels_left - padding) / 2
+    right_x = left_x + (stone_side + labels_w) / 2 + padding
+    row_centers = [y0 + i * cell for i in range(board_size)]
+    for i, label in enumerate(row_labels(board_size)):
+        ycenter = row_centers[i]
+        draw_text_cr(cr, left_x, ycenter, label, font_px, align="center", valign="center")
+        draw_text_cr(cr, right_x, ycenter, label, font_px, align="center", valign="center")
+
+    # column labels top/bottom inside stone area
+    top_y = labels_top - y_offset_top + 1
+    bottom_y = labels_top + labels_h + y_offset_bottom
+    col_centers = [x0 + i * cell for i in range(board_size)]
+    for idx, lab in enumerate(column_labels(board_size)):
+        xcenter = col_centers[idx]
+        draw_text_cr(cr, xcenter, top_y, lab, font_px, align="center", valign="top")
+        draw_text_cr(cr, xcenter, bottom_y, lab, font_px, align="center", valign="bottom")
+
+
+def draw_hoshi(cr: cairo.Context, board_size: int, layout):
+    grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
+    if board_size == 19:
+        hoshi_r = max(1.0, cell * HOSHI_RADIUS_FACTOR)
+        cr.set_source_rgb(*STAR_COLOR)
+        for r in (3, 9, 15):
+            for c in (3, 9, 15):
+                cx = x0 + c * cell
+                cy = y0 + r * cell
+                cr.arc(cx, cy, hoshi_r, 0, 2.0 * math.pi)
+                cr.fill()
+
+
+def draw_grid(cr: cairo.Context, board_size: int, layout):
+    grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
+    # # stone area background
+    # stone_left, stone_top, stone_side, _ = layout["stone_area"]
+    # cr.set_source_rgb(*BOARD_BG)
+    # cr.rectangle(stone_left, stone_top, stone_side, stone_side)
+    # cr.fill()
+
+    # grid lines
+    line_width = max(1.0, cell * LINE_WIDTH_FACTOR)
+    cr.set_source_rgb(*LINE_COLOR)
+    cr.set_line_width(line_width)
+    for i in range(board_size):
+        xi = x0 + i * cell
+        cr.move_to(xi, grid_top)
+        cr.line_to(xi, grid_bottom)
+    for j in range(board_size):
+        yj = y0 + j * cell
+        cr.move_to(grid_left, yj)
+        cr.line_to(grid_right, yj)
+    cr.stroke()
+
+
+def draw_panel(cr: cairo.Context, board_size: int, layout, width: int, height: int):
+    # fills outside neutral and draws outer dashed border (viewport)
+    vp_left, vp_top, vp_w, vp_h = layout["viewport"]
+    cr.set_source_rgb(*NEUTRAL_OUTSIDE)
+    # cr.rectangle(0, 0, int(self.get_allocated_width()), int(self.get_allocated_height()))
+    cr.rectangle(0, 0, width, height)
+    cr.fill()
+
+    # # outer dashed border
+    # cr.set_source_rgb(*BORDER_COLOR)
+    # cr.set_line_width(1.0)
+    # dash = [float(x) for x in OUTER_BORDER_DASH.split(",")] if isinstance(OUTER_BORDER_DASH, str) else [6.0, 4.0]
+    # cr.set_dash(dash)
+    # cr.rectangle(vp_left + 0.5, vp_top + 0.5, vp_w - 1.0, vp_h - 1.0)
+    # cr.stroke()
+    # cr.set_dash([])
+
+    cr.set_source_rgb(*BOARD_BG)
+    cr.rectangle(vp_left, vp_top, vp_w, vp_h)
+    cr.fill()
+
+
+def on_draw(cr: cairo.Context, board_size: int, width: int, height: int, stones: list[tuple[int, int, str]]):
+    layout = compute_layout(cr, board_size, width, height)
+    # Call modular draws in order
+    draw_panel(cr, board_size, layout, width, height)
+    # outer labels-area border (drawn here as dashed rectangle)
+    labels_left, labels_top, labels_w, labels_h = layout["labels_area"]
+    draw_dashed_rectangle(cr, labels_left, labels_top, labels_w, labels_h)
+
+    # inner border around stone area
+    cell = layout["grid"][4]
+    padding = INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell
+    stone_left, stone_top, stone_side, _ = increase_size(layout["stone_area"], (padding,) * 2)
+    draw_dashed_rectangle(cr, stone_left, stone_top, stone_side, stone_side)
+
+    # grid, hoshi, stones, coords
+    draw_grid(cr, board_size, layout)
+    draw_hoshi(cr, board_size, layout)
+    draw_labels(cr, board_size, layout)
+    draw_stones(cr, board_size, layout, stones)
+
+
 class Goban(Gtk.DrawingArea):
     def __init__(self, size=BOARD_SIZE):
         super().__init__()
         self.set_draw_func(self.on_draw)
         self.size = size
         self.col_labels = column_labels(size)
-        self.row_labels = [str(size - i) for i in range(size)]
+        self.row_labels = row_labels(size)
         # demo stones (r,c,color)
         self.stones: List[Tuple[int, int, str]] = [
             (x, y, ['black', 'white'][n % 2])
@@ -174,302 +435,11 @@ class Goban(Gtk.DrawingArea):
         ]
         # self.stones = []
 
-    def compute_text_sizes(self, cr: cairo.Context, font_size: int):
-        layout = create_layout(cr, font_size, '')
-        dimensions = []
-        y_offset_top = None
-        y_offset_bottom = None
-        for texts, dimension_index in [
-            (self.row_labels, 0),
-            ([''.join(self.col_labels)], 1),
-        ]:
-            max_dimension = float('-inf')
-            for text in texts:
-                layout.set_text(text, -1)
-                w, h = layout.get_pixel_size()
-                if dimension_index == 0:
-                    # print([
-                    #     (i.x, i.y, i.width, i.height)
-                    #     for i in layout.get_pixel_extents()
-                    # ], file=sys.stderr)
-                    # print((w, h), text, file=sys.stderr)
-                    dimension = (w, h)[dimension_index]
-                else:
-                    ink_rect = layout.get_pixel_extents().ink_rect
-                    dimension = ink_rect.height
-                    y_offset_top = ink_rect.y
-                    y_offset_bottom = h - (ink_rect.y + ink_rect.height)
-                if dimension > max_dimension:
-                    max_dimension = dimension
-            dimensions.append(max_dimension)
-        return tuple(dimensions) + (y_offset_top, y_offset_bottom)
-
-    def compute_cell_size(self, cr: cairo.Context, width: int, height: int):
-        # margin + margin + letters + (margin + margin + 19)*cell_size = w_h_size
-        # letters = cell*font_size_ratio*letters_coeff
-        letters_coefficients = [i / 100 for i in self.compute_text_sizes(cr, 100)[:2]]
-        cell_size = min(
-            (dimension - margin * 2 - padding * 2) / (
-                    self.size + margin_relative * 2 + padding_relative * 2 + letter_relative * 2)
-            for dimension, margin, padding, margin_relative, padding_relative, letter_relative in (
-                zip(
-                    [width, height],
-                    [OUTER_MARGIN_FIXED] * 2,
-                    [INNER_PADDING_FIXED] * 2,
-                    [OUTER_MARGIN_RELATIVE] * 2,
-                    [INNER_PADDING_RELATIVE] * 2,
-                    letters_coefficients,
-                )
-            )
-        )
-        font_size = self.compute_font_size_from_cell(cell_size)
-        letters_dimensions = self.compute_text_sizes(cr, font_size)
-        cell_size = min(
-            (dimension - margin * 2 - padding * 2 - letters_dimension * 2) / (
-                    self.size + margin_relative * 2 + padding_relative * 2)
-            for dimension, margin, padding, letters_dimension, margin_relative, padding_relative in (
-                zip(
-                    [width, height],
-                    [OUTER_MARGIN_FIXED] * 2,
-                    [INNER_PADDING_FIXED] * 2,
-                    letters_dimensions[:2],
-                    [OUTER_MARGIN_RELATIVE] * 2,
-                    [INNER_PADDING_RELATIVE] * 2,
-                )
-            )
-        )
-        return cell_size, font_size, letters_dimensions
-
-    def increase_size(self, coords: Tuple[float, float, float, float], increase: Tuple[float, float],
-                      increase_coeff: int = 1) -> Tuple[float, float, float, float]:
-        return tuple(i + j * coeff * increase_coeff for i, j, coeff in zip(coords, increase * 2, (-1, -1, 2, 2)))
-
-    # duplicate code
-    def shift(self, coords: Tuple[float, float, float, float], increase: Tuple[float, float],
-              increase_coeff: int = 1) -> Tuple[float, float, float, float]:
-        return tuple(i + j * increase_coeff for i, j in zip(coords, increase + (0, 0)))
-
-    def compute_font_size_from_cell(self, cell: float) -> int:
-        # compute font size
-        font_px = max(10, int(round(cell * FONT_SCALE)))
-        return font_px
-
-    def compute_layout_1(self, cr: cairo.Context, width: int, height: int):
-        cell_size, font_size, letters_dimensions = self.compute_cell_size(cr, width, height)
-        board = (0, 0, cell_size * self.size, cell_size * self.size)
-        board_with_padding = self.increase_size(board, (INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell_size,) * 2)
-        labels = self.increase_size(board_with_padding, letters_dimensions[:2])
-        overall = self.increase_size(labels, (OUTER_MARGIN_FIXED + OUTER_MARGIN_RELATIVE * cell_size,) * 2)
-        start = tuple((i - j) / 2 for i, j in zip([width, height], overall[2:]))
-        shift: Tuple[float, float] = tuple(i - j for i, j in zip(start, overall[:2]))
-        # print(board, board_with_padding, labels, overall, (width, height), start, file=sys.stderr, sep='\n')
-        board_shifted = self.shift(board, shift)
-        return {
-            "viewport": self.shift(overall, shift),  # (vp_left, vp_top, vp_w, vp_h),
-            "labels_area": self.shift(labels, shift),  # (labels_left, labels_top, labels_w, labels_h),
-            "stone_area": board_shifted,  # (stone_left, stone_top, stone_side, stone_side),
-            "grid": self.grid_from_cell_and_stone_place(cell_size, *(board_shifted[:2])),
-            "font_px": font_size,  # font_px,
-            "letters_dimensions": letters_dimensions,
-        }
-
-    # compute layout metrics and nested rectangles
-    def compute_layout(self, cr: cairo.Context, width: int, height: int):
-        # print(self.compute_text_sizes(cr, 100), file=sys.stderr)
-        # 1. viewport (maximal rectangle inside window with OUTER_MARGIN)
-        vp_left = OUTER_MARGIN
-        vp_top = OUTER_MARGIN
-        vp_right = max(OUTER_MARGIN, width - OUTER_MARGIN)
-        vp_bottom = max(OUTER_MARGIN, height - OUTER_MARGIN)
-        vp_w = max(0.0, vp_right - vp_left)
-        vp_h = max(0.0, vp_bottom - vp_top)
-
-        # 2. labels+goban area (we will use the entire viewport rectangle as labels_area)
-        labels_left = vp_left
-        labels_top = vp_top
-        labels_w = vp_w
-        labels_h = vp_h
-
-        # 3. stone_area: square inside labels_area that is as large as possible but still leaves room for labels drawn INSIDE the stone area
-        # We'll treat stone_area as a square of side S, and grid sits inside with N cells and half-cell padding.
-        # stone_area_side = N * cell
-        # Try to use the maximal square side that fits in labels_area
-        max_square = min(labels_w, labels_h)
-        min_square = (self.size) * MIN_CELL  # stone_area side minimal (N * MIN_CELL)
-        stone_side = max(max_square, min_square) if max_square >= min_square else min_square
-        # but prefer limited by labels_area
-        stone_side = min(max_square, stone_side)
-
-        # compute cell so that stone_side = N * cell
-        cell = stone_side / float(self.size)
-        if cell < MIN_CELL:
-            cell = MIN_CELL
-            stone_side = cell * float(self.size)
-
-        # position stone_area centered within labels_area
-        stone_left = labels_left + (labels_w - stone_side) / 2.0
-        stone_top = labels_top + (labels_h - stone_side) / 2.0
-        stone_right = stone_left + stone_side
-        stone_bottom = stone_top + stone_side
-
-        grid = self.grid_from_cell_and_stone_place(cell, stone_left, stone_top)
-
-        font_px = self.compute_font_size_from_cell(cell)
-
-        return {
-            "viewport": (vp_left, vp_top, vp_w, vp_h),
-            "labels_area": (labels_left, labels_top, labels_w, labels_h),
-            "stone_area": (stone_left, stone_top, stone_side, stone_side),
-            "grid": grid,
-            "font_px": font_px
-        }
-
-    def grid_from_cell_and_stone_place(self, cell: float, stone_left: float, stone_top: float) -> tuple[
-        float, float, float, float, float, float, float, float]:
-        # grid intersections origin (top-left) is half-cell inside stone_area
-        half = cell / 2.0
-        x0 = stone_left + half
-        y0 = stone_top + half
-        grid_span = (self.size - 1) * cell
-        grid_left = x0
-        grid_top = y0
-        grid_right = x0 + grid_span
-        grid_bottom = y0 + grid_span
-        grid = (grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span)
-        return grid
-
-    # Modular draw functions
-    def draw_panel(self, cr: cairo.Context, layout):
-        # fills outside neutral and draws outer dashed border (viewport)
-        vp_left, vp_top, vp_w, vp_h = layout["viewport"]
-        cr.set_source_rgb(*NEUTRAL_OUTSIDE)
-        cr.rectangle(0, 0, int(self.get_allocated_width()), int(self.get_allocated_height()))
-        cr.fill()
-
-        # # outer dashed border
-        # cr.set_source_rgb(*BORDER_COLOR)
-        # cr.set_line_width(1.0)
-        # dash = [float(x) for x in OUTER_BORDER_DASH.split(",")] if isinstance(OUTER_BORDER_DASH, str) else [6.0, 4.0]
-        # cr.set_dash(dash)
-        # cr.rectangle(vp_left + 0.5, vp_top + 0.5, vp_w - 1.0, vp_h - 1.0)
-        # cr.stroke()
-        # cr.set_dash([])
-
-        cr.set_source_rgb(*BOARD_BG)
-        cr.rectangle(vp_left, vp_top, vp_w, vp_h)
-        cr.fill()
-
-    def draw_grid(self, cr: cairo.Context, layout):
-        grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
-        # # stone area background
-        # stone_left, stone_top, stone_side, _ = layout["stone_area"]
-        # cr.set_source_rgb(*BOARD_BG)
-        # cr.rectangle(stone_left, stone_top, stone_side, stone_side)
-        # cr.fill()
-
-        # grid lines
-        line_width = max(1.0, cell * LINE_WIDTH_FACTOR)
-        cr.set_source_rgb(*LINE_COLOR)
-        cr.set_line_width(line_width)
-        for i in range(self.size):
-            xi = x0 + i * cell
-            cr.move_to(xi, grid_top)
-            cr.line_to(xi, grid_bottom)
-        for j in range(self.size):
-            yj = y0 + j * cell
-            cr.move_to(grid_left, yj)
-            cr.line_to(grid_right, yj)
-        cr.stroke()
-
-    def draw_hoshi(self, cr: cairo.Context, layout):
-        grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
-        if self.size == 19:
-            hoshi_r = max(1.0, cell * HOSHI_RADIUS_FACTOR)
-            cr.set_source_rgb(*STAR_COLOR)
-            for r in (3, 9, 15):
-                for c in (3, 9, 15):
-                    cx = x0 + c * cell
-                    cy = y0 + r * cell
-                    cr.arc(cx, cy, hoshi_r, 0, 2.0 * math.pi)
-                    cr.fill()
-
-    def draw_stones(self, cr: cairo.Context, layout):
-        grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
-        stone_r = cell * STONE_RADIUS_FACTOR
-        line_width = max(1.0, cell * LINE_WIDTH_FACTOR)
-        for r, c, color in self.stones:
-            cx = x0 + c * cell
-            cy = y0 + r * cell
-            if color == "black":
-                cr.set_source_rgb(*STONE_BLACK)
-                cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
-                cr.fill()
-            else:
-                cr.set_source_rgb(*STONE_WHITE)
-                cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
-                cr.fill_preserve()
-                cr.set_source_rgb(0, 0, 0)
-                cr.set_line_width(max(1.0, line_width * 0.9))
-                cr.stroke()
-
-    def draw_labels(self, cr: cairo.Context, layout):
-        grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
-        stone_left, stone_top, stone_side, _ = layout["stone_area"]
-        labels_left, labels_top, labels_w, labels_h = layout["labels_area"]
-        font_px = layout["font_px"]
-        letters_width, letters_height, y_offset_top, y_offset_bottom = layout["letters_dimensions"]
-        inset = INSET_LABELS_FACTOR * cell
-
-        # row labels left/right inside stone area (inset)
-        padding = INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell
-        left_x = (stone_left + labels_left - padding) / 2
-        right_x = left_x + (stone_side + labels_w) / 2 + padding
-        row_centers = [y0 + i * cell for i in range(self.size)]
-        for i, label in enumerate(self.row_labels):
-            ycenter = row_centers[i]
-            draw_text_cr(cr, left_x, ycenter, label, font_px, align="center", valign="center")
-            draw_text_cr(cr, right_x, ycenter, label, font_px, align="center", valign="center")
-
-        # column labels top/bottom inside stone area
-        top_y = labels_top - y_offset_top + 1
-        bottom_y = labels_top + labels_h + y_offset_bottom
-        col_centers = [x0 + i * cell for i in range(self.size)]
-        for idx, lab in enumerate(self.col_labels):
-            xcenter = col_centers[idx]
-            draw_text_cr(cr, xcenter, top_y, lab, font_px, align="center", valign="top")
-            draw_text_cr(cr, xcenter, bottom_y, lab, font_px, align="center", valign="bottom")
-
     # The main draw func
     def on_draw(self, area, cr: cairo.Context, width: int, height: int):
-        layout = self.compute_layout(cr, width, height)
-        # print(self.compute_cell_size(cr, width, height), (layout['grid'][4]), file=sys.stderr)
-        layout = self.compute_layout_1(cr, width, height)
-        # Call modular draws in order
-        self.draw_panel(cr, layout)
-        # outer labels-area border (drawn here as dashed rectangle)
-        labels_left, labels_top, labels_w, labels_h = layout["labels_area"]
-        self.draw_dashed_rectangle(cr, labels_left, labels_top, labels_w, labels_h)
-
-        # inner border around stone area
-        cell = layout["grid"][4]
-        padding = INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell
-        stone_left, stone_top, stone_side, _ = self.increase_size(layout["stone_area"], (padding,) * 2)
-        self.draw_dashed_rectangle(cr, stone_left, stone_top, stone_side, stone_side)
-
-        # grid, hoshi, stones, coords
-        self.draw_grid(cr, layout)
-        self.draw_hoshi(cr, layout)
-        self.draw_labels(cr, layout)
-        self.draw_stones(cr, layout)
-
-    def draw_dashed_rectangle(self, cr: cairo.Context, labels_left: float, labels_top: float, labels_w: float,
-                              labels_h: float):
-        cr.set_source_rgb(*BORDER_COLOR)
-        cr.set_line_width(1.0)
-        cr.set_dash([4.0, 3.0])
-        cr.rectangle(labels_left + 0.5, labels_top + 0.5, labels_w - 1.0, labels_h - 1.0)
-        cr.stroke()
-        cr.set_dash([])
+        board_size = self.size
+        stones = self.stones
+        on_draw(cr, board_size, width, height, stones)
 
 
 # GTK App

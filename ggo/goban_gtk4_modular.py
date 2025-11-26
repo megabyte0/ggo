@@ -27,10 +27,11 @@ import cairo
 from dotenv import load_dotenv
 from typing import List, Tuple
 
+DEFAULT_STYLE = {}
 # Load env
-ENV_PATH = os.path.join(os.path.dirname(__file__), "goban.env")
-if os.path.exists(ENV_PATH):
-    load_dotenv(ENV_PATH, override=False)
+DEFAULT_STYLE['env_path'] = os.path.join(os.path.dirname(__file__), "goban.env")
+if os.path.exists(DEFAULT_STYLE['env_path']):
+    load_dotenv(DEFAULT_STYLE['env_path'], override=False)
 else:
     # Allow running without file for convenience
     pass
@@ -66,28 +67,28 @@ def get_rgb(name: str, default: str) -> Tuple[float, float, float]:
 
 
 # Configurable constants (from .env)
-BOARD_SIZE = geti("BOARD_SIZE", 19)
+DEFAULT_STYLE['board_size'] = geti("BOARD_SIZE", 19)
 
-OUTER_MARGIN = getf("OUTER_MARGIN",
+DEFAULT_STYLE['outer_margin'] = getf("OUTER_MARGIN",
                     0)  # outer gap from window edge to viewport (user requested no white margin by default 0)
-OUTER_BORDER_DASH = gets("OUTER_BORDER_DASH", "6,4")
-LABEL_MARGIN = getf("LABEL_MARGIN", 8)  # margin between labels area and stone area
-INSET_LABELS_FACTOR = getf("INSET_LABELS_FACTOR", 0.18)
-MIN_CELL = getf("MIN_CELL", 6.0)
-OUTER_MARGIN_RELATIVE = getf("OUTER_MARGIN_RELATIVE", 0)
-OUTER_MARGIN_FIXED = getf("OUTER_MARGIN_FIXED", 3)
-INNER_PADDING_RELATIVE = getf("INNER_PADDING_RELATIVE", 0)
-INNER_PADDING_FIXED = getf("INNER_PADDING_FIXED", 6)
+DEFAULT_STYLE['outer_border_dash'] = gets("OUTER_BORDER_DASH", "6,4")
+DEFAULT_STYLE['label_margin'] = getf("LABEL_MARGIN", 8)  # margin between labels area and stone area
+DEFAULT_STYLE['inset_labels_factor'] = getf("INSET_LABELS_FACTOR", 0.18)
+DEFAULT_STYLE['min_cell'] = getf("MIN_CELL", 6.0)
+DEFAULT_STYLE['outer_margin_relative'] = getf("OUTER_MARGIN_RELATIVE", 0)
+DEFAULT_STYLE['outer_margin_fixed'] = getf("OUTER_MARGIN_FIXED", 3)
+DEFAULT_STYLE['inner_padding_relative'] = getf("INNER_PADDING_RELATIVE", 0)
+DEFAULT_STYLE['inner_padding_fixed'] = getf("INNER_PADDING_FIXED", 6)
 
-FONT_SCALE = getf("FONT_SCALE", 0.34)
-STONE_RADIUS_FACTOR = getf("STONE_RADIUS_FACTOR", 0.46)
-HOSHI_RADIUS_FACTOR = getf("HOSHI_RADIUS_FACTOR", 0.12)
-LINE_WIDTH_FACTOR = getf("LINE_WIDTH_FACTOR", 0.03)
+DEFAULT_STYLE['font_scale'] = getf("FONT_SCALE", 0.34)
+DEFAULT_STYLE['stone_radius_factor'] = getf("STONE_RADIUS_FACTOR", 0.46)
+DEFAULT_STYLE['hoshi_radius_factor'] = getf("HOSHI_RADIUS_FACTOR", 0.12)
+DEFAULT_STYLE['line_width_factor'] = getf("LINE_WIDTH_FACTOR", 0.03)
 
 # Colors (r,g,b)
-NEUTRAL_OUTSIDE = tuple(float(x) for x in gets("NEUTRAL_OUTSIDE", "0.92,0.92,0.92").split(","))
-# BOARD_BG = tuple(float(x) / 100 for x in gets("BOARD_BG", "63.1,58.7,49.3").split(","))
-BOARD_BG = get_rgb("BOARD_BG",
+DEFAULT_STYLE['neutral_outside'] = tuple(float(x) for x in gets("NEUTRAL_OUTSIDE", "0.92,0.92,0.92").split(","))
+# DEFAULT_STYLE['board_bg'] = tuple(float(x) / 100 for x in gets("BOARD_BG", "63.1,58.7,49.3").split(","))
+DEFAULT_STYLE['board_bg'] = get_rgb("BOARD_BG",
                    # "#CB7324"
                    # "#B2611A"
                    "#C0742A"
@@ -95,13 +96,13 @@ BOARD_BG = get_rgb("BOARD_BG",
                    # "#C68038"
                    # "#A55412"
                    )
-LINE_COLOR = tuple(float(x) for x in gets("LINE_COLOR", "0.08,0.08,0.08").split(","))
-STAR_COLOR = tuple(float(x) for x in gets("STAR_COLOR", "0.08,0.08,0.08").split(","))
-STONE_BLACK = tuple(float(x) for x in gets("STONE_BLACK", "0.03,0.03,0.03").split(","))
-STONE_WHITE = tuple(float(x) for x in gets("STONE_WHITE", "0.99,0.99,0.99").split(","))
-BORDER_COLOR = tuple(float(x) for x in gets("BORDER_COLOR", "0.5,0.5,0.5").split(","))
+DEFAULT_STYLE['line_color'] = tuple(float(x) for x in gets("LINE_COLOR", "0.08,0.08,0.08").split(","))
+DEFAULT_STYLE['star_color'] = tuple(float(x) for x in gets("STAR_COLOR", "0.08,0.08,0.08").split(","))
+DEFAULT_STYLE['stone_black'] = tuple(float(x) for x in gets("STONE_BLACK", "0.03,0.03,0.03").split(","))
+DEFAULT_STYLE['stone_white'] = tuple(float(x) for x in gets("STONE_WHITE", "0.99,0.99,0.99").split(","))
+DEFAULT_STYLE['border_color'] = tuple(float(x) for x in gets("BORDER_COLOR", "0.5,0.5,0.5").split(","))
 
-FONT_FAMILY = gets("FONT_FAMILY", "Sans")
+DEFAULT_STYLE['font_family'] = gets("FONT_FAMILY", "Sans")
 
 
 # Utility: column labels A.. (skip I)
@@ -121,7 +122,7 @@ def column_labels(n: int) -> List[str]:
 # Pango helper
 def create_layout(cr: cairo.Context, font_size: int, text: str):
     layout = PangoCairo.create_layout(cr)
-    desc = Pango.font_description_from_string(f"{FONT_FAMILY} {font_size}")
+    desc = Pango.font_description_from_string(f"{DEFAULT_STYLE['font_family']} {font_size}")
     layout.set_font_description(desc)
     layout.set_text(text, -1)
     return layout
@@ -165,7 +166,7 @@ def shift(coords: Tuple[float, float, float, float], increase: Tuple[float, floa
 
 def compute_font_size_from_cell(cell: float) -> int:
     # compute font size
-    font_px = max(10, int(round(cell * FONT_SCALE)))
+    font_px = max(10, int(round(cell * DEFAULT_STYLE['font_scale'])))
     return font_px
 
 
@@ -214,10 +215,10 @@ def compute_cell_size(cr: cairo.Context, board_size: int, width: int, height: in
         for dimension, margin, padding, margin_relative, padding_relative, letter_relative in (
             zip(
                 [width, height],
-                [OUTER_MARGIN_FIXED] * 2,
-                [INNER_PADDING_FIXED] * 2,
-                [OUTER_MARGIN_RELATIVE] * 2,
-                [INNER_PADDING_RELATIVE] * 2,
+                [DEFAULT_STYLE['outer_margin_fixed']] * 2,
+                [DEFAULT_STYLE['inner_padding_fixed']] * 2,
+                [DEFAULT_STYLE['outer_margin_relative']] * 2,
+                [DEFAULT_STYLE['inner_padding_relative']] * 2,
                 letters_coefficients,
             )
         )
@@ -230,11 +231,11 @@ def compute_cell_size(cr: cairo.Context, board_size: int, width: int, height: in
         for dimension, margin, padding, letters_dimension, margin_relative, padding_relative in (
             zip(
                 [width, height],
-                [OUTER_MARGIN_FIXED] * 2,
-                [INNER_PADDING_FIXED] * 2,
+                [DEFAULT_STYLE['outer_margin_fixed']] * 2,
+                [DEFAULT_STYLE['inner_padding_fixed']] * 2,
                 letters_dimensions[:2],
-                [OUTER_MARGIN_RELATIVE] * 2,
-                [INNER_PADDING_RELATIVE] * 2,
+                [DEFAULT_STYLE['outer_margin_relative']] * 2,
+                [DEFAULT_STYLE['inner_padding_relative']] * 2,
             )
         )
     )
@@ -259,9 +260,9 @@ def grid_from_cell_and_stone_place(board_size: int, cell: float, stone_left: flo
 def compute_layout(cr: cairo.Context, board_size: int, width: int, height: int):
     cell_size, font_size, letters_dimensions = compute_cell_size(cr, board_size, width, height)
     board = (0, 0, cell_size * board_size, cell_size * board_size)
-    board_with_padding = increase_size(board, (INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell_size,) * 2)
+    board_with_padding = increase_size(board, (DEFAULT_STYLE['inner_padding_fixed'] + DEFAULT_STYLE['inner_padding_relative'] * cell_size,) * 2)
     labels = increase_size(board_with_padding, letters_dimensions[:2])
-    overall = increase_size(labels, (OUTER_MARGIN_FIXED + OUTER_MARGIN_RELATIVE * cell_size,) * 2)
+    overall = increase_size(labels, (DEFAULT_STYLE['outer_margin_fixed'] + DEFAULT_STYLE['outer_margin_relative'] * cell_size,) * 2)
     start = tuple((i - j) / 2 for i, j in zip([width, height], overall[2:]))
     shift_back_amount: Tuple[float, float] = tuple(i - j for i, j in zip(start, overall[:2]))
     # print(board, board_with_padding, labels, overall, (width, height), start, file=sys.stderr, sep='\n')
@@ -278,7 +279,7 @@ def compute_layout(cr: cairo.Context, board_size: int, width: int, height: int):
 
 def draw_dashed_rectangle(cr: cairo.Context, labels_left: float, labels_top: float, labels_w: float,
                           labels_h: float):
-    cr.set_source_rgb(*BORDER_COLOR)
+    cr.set_source_rgb(*DEFAULT_STYLE['border_color'])
     cr.set_line_width(1.0)
     cr.set_dash([4.0, 3.0])
     cr.rectangle(labels_left + 0.5, labels_top + 0.5, labels_w - 1.0, labels_h - 1.0)
@@ -290,17 +291,17 @@ def draw_dashed_rectangle(cr: cairo.Context, labels_left: float, labels_top: flo
 
 def draw_stones(cr: cairo.Context, board_size: int, layout, stones: List):
     grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
-    stone_r = cell * STONE_RADIUS_FACTOR
-    line_width = max(1.0, cell * LINE_WIDTH_FACTOR)
+    stone_r = cell * DEFAULT_STYLE['stone_radius_factor']
+    line_width = max(1.0, cell * DEFAULT_STYLE['line_width_factor'])
     for r, c, color in stones:
         cx = x0 + c * cell
         cy = y0 + r * cell
         if color == "black":
-            cr.set_source_rgb(*STONE_BLACK)
+            cr.set_source_rgb(*DEFAULT_STYLE['stone_black'])
             cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
             cr.fill()
         else:
-            cr.set_source_rgb(*STONE_WHITE)
+            cr.set_source_rgb(*DEFAULT_STYLE['stone_white'])
             cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
             cr.fill_preserve()
             cr.set_source_rgb(0, 0, 0)
@@ -316,7 +317,7 @@ def draw_labels(cr: cairo.Context, board_size: int, layout):
     letters_width, letters_height, y_offset_top, y_offset_bottom = layout["letters_dimensions"]
 
     # row labels left/right inside stone area (inset)
-    padding = INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell
+    padding = DEFAULT_STYLE['inner_padding_fixed'] + DEFAULT_STYLE['inner_padding_relative'] * cell
     left_x = (stone_left + labels_left - padding) / 2
     right_x = left_x + (stone_side + labels_w) / 2 + padding
     row_centers = [y0 + i * cell for i in range(board_size)]
@@ -338,8 +339,8 @@ def draw_labels(cr: cairo.Context, board_size: int, layout):
 def draw_hoshi(cr: cairo.Context, board_size: int, layout):
     grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
     if board_size == 19:
-        hoshi_r = max(1.0, cell * HOSHI_RADIUS_FACTOR)
-        cr.set_source_rgb(*STAR_COLOR)
+        hoshi_r = max(1.0, cell * DEFAULT_STYLE['hoshi_radius_factor'])
+        cr.set_source_rgb(*DEFAULT_STYLE['star_color'])
         for r in (3, 9, 15):
             for c in (3, 9, 15):
                 cx = x0 + c * cell
@@ -352,13 +353,13 @@ def draw_grid(cr: cairo.Context, board_size: int, layout):
     grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
     # # stone area background
     # stone_left, stone_top, stone_side, _ = layout["stone_area"]
-    # cr.set_source_rgb(*BOARD_BG)
+    # cr.set_source_rgb(*DEFAULT_STYLE['board_bg'])
     # cr.rectangle(stone_left, stone_top, stone_side, stone_side)
     # cr.fill()
 
     # grid lines
-    line_width = max(1.0, cell * LINE_WIDTH_FACTOR)
-    cr.set_source_rgb(*LINE_COLOR)
+    line_width = max(1.0, cell * DEFAULT_STYLE['line_width_factor'])
+    cr.set_source_rgb(*DEFAULT_STYLE['line_color'])
     cr.set_line_width(line_width)
     for i in range(board_size):
         xi = x0 + i * cell
@@ -374,21 +375,21 @@ def draw_grid(cr: cairo.Context, board_size: int, layout):
 def draw_panel(cr: cairo.Context, board_size: int, layout, width: int, height: int):
     # fills outside neutral and draws outer dashed border (viewport)
     vp_left, vp_top, vp_w, vp_h = layout["viewport"]
-    cr.set_source_rgb(*NEUTRAL_OUTSIDE)
+    cr.set_source_rgb(*DEFAULT_STYLE['neutral_outside'])
     # cr.rectangle(0, 0, int(self.get_allocated_width()), int(self.get_allocated_height()))
     cr.rectangle(0, 0, width, height)
     cr.fill()
 
     # # outer dashed border
-    # cr.set_source_rgb(*BORDER_COLOR)
+    # cr.set_source_rgb(*DEFAULT_STYLE['border_color'])
     # cr.set_line_width(1.0)
-    # dash = [float(x) for x in OUTER_BORDER_DASH.split(",")] if isinstance(OUTER_BORDER_DASH, str) else [6.0, 4.0]
+    # dash = [float(x) for x in DEFAULT_STYLE['outer_border_dash'].split(",")] if isinstance(DEFAULT_STYLE['outer_border_dash'], str) else [6.0, 4.0]
     # cr.set_dash(dash)
     # cr.rectangle(vp_left + 0.5, vp_top + 0.5, vp_w - 1.0, vp_h - 1.0)
     # cr.stroke()
     # cr.set_dash([])
 
-    cr.set_source_rgb(*BOARD_BG)
+    cr.set_source_rgb(*DEFAULT_STYLE['board_bg'])
     cr.rectangle(vp_left, vp_top, vp_w, vp_h)
     cr.fill()
 
@@ -403,7 +404,7 @@ def on_draw(cr: cairo.Context, board_size: int, width: int, height: int, stones:
 
     # inner border around stone area
     cell = layout["grid"][4]
-    padding = INNER_PADDING_FIXED + INNER_PADDING_RELATIVE * cell
+    padding = DEFAULT_STYLE['inner_padding_fixed'] + DEFAULT_STYLE['inner_padding_relative'] * cell
     stone_left, stone_top, stone_side, _ = increase_size(layout["stone_area"], (padding,) * 2)
     draw_dashed_rectangle(cr, stone_left, stone_top, stone_side, stone_side)
 
@@ -415,7 +416,7 @@ def on_draw(cr: cairo.Context, board_size: int, width: int, height: int, stones:
 
 
 class Goban(Gtk.DrawingArea):
-    def __init__(self, size=BOARD_SIZE):
+    def __init__(self, size=DEFAULT_STYLE['board_size']):
         super().__init__()
         self.set_draw_func(self.on_draw)
         self.size = size
@@ -451,7 +452,7 @@ class GobanApp(Gtk.Application):
         win = Gtk.ApplicationWindow(application=self)
         win.set_title("Goban GTK4 Modular")
         win.set_default_size(900, 800)
-        goban = Goban(size=BOARD_SIZE)
+        goban = Goban(size=DEFAULT_STYLE['board_size'])
         win.set_child(goban)
         win.present()
 

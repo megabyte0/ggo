@@ -296,7 +296,7 @@ def draw_stones(cr: cairo.Context, board_size: int, layout, stones: List):
     for r, c, color in stones:
         cx = x0 + c * cell
         cy = y0 + r * cell
-        if color == "black":
+        if color.lower() in ["black", "b"]:
             cr.set_source_rgb(*DEFAULT_STYLE['stone_black'])
             cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
             cr.fill()
@@ -413,6 +413,7 @@ def on_draw(cr: cairo.Context, board_size: int, width: int, height: int, stones:
     draw_hoshi(cr, board_size, layout)
     draw_labels(cr, board_size, layout)
     draw_stones(cr, board_size, layout, stones)
+    return layout
 
 
 class Goban(Gtk.DrawingArea):

@@ -251,3 +251,12 @@ class Board:
         for r in range(self.size):
             rows.append(''.join('.' if x is None else x for x in self._board[r]))
         return '\n'.join(rows)
+
+    def get_board(self):
+        """Return a copy of internal board suitable for UI: list of lists with None/'B'/'W'."""
+        return [row[:] for row in self._board]
+
+    def current_player(self):
+        """Return color to move as 'B' or 'W'."""
+        return self.to_move
+

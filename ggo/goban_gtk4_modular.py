@@ -335,6 +335,8 @@ def draw_labels(cr: cairo.Context, board_size: int, layout):
         draw_text_cr(cr, xcenter, top_y, lab, font_px, align="center", valign="top")
         draw_text_cr(cr, xcenter, bottom_y, lab, font_px, align="center", valign="bottom")
 
+    cr.new_path()
+
 
 def draw_hoshi(cr: cairo.Context, board_size: int, layout):
     grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]

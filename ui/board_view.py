@@ -1,5 +1,6 @@
 # ui/board_view.py
 import gi
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
@@ -7,6 +8,7 @@ from gi.repository import Gtk, Pango, PangoCairo
 import cairo
 from typing import Optional, Dict, Tuple
 from ggo.goban_gtk4_modular import on_draw, DEFAULT_STYLE
+
 
 class BoardView(Gtk.Box):
     def __init__(self, board_size: int = 19, base_margin: int = 20, style: Optional[Dict] = None):
@@ -37,6 +39,7 @@ class BoardView(Gtk.Box):
         default_style.update({
             "ghost_black_alpha": 0.35,
             "ghost_white_alpha": 0.85,
+            'ghost_allowed': False,
         })
         self.style = default_style if style is None else {**default_style, **style}
 
@@ -85,7 +88,7 @@ class BoardView(Gtk.Box):
             self.ghost = None
             self.darea.queue_draw()
 
-    def show_heatmap(self, data: Dict[Tuple[int,int], float]):
+    def show_heatmap(self, data: Dict[Tuple[int, int], float]):
         self.heatmap = data
         self.darea.queue_draw()
 
@@ -94,6 +97,20 @@ class BoardView(Gtk.Box):
         self.darea.queue_draw()
 
     def draw(self):
+        self.darea.queue_draw()
+
+    def set_ghost_allowed(self, allowed: bool):
+        """Optional: allow view to render ghost differently if move illegal."""
+        self.style['ghost_allowed'] = bool(allowed)
+        self.darea.queue_draw()
+
+    def set_katago_stats(self, stats: dict):
+        """stats: {(r,c): (win_percent, score, visits, pv_list)}"""
+        self._katago_stats = stats or {}
+        self.darea.queue_draw()
+
+    def set_top_winrate(self, win_percent: float):
+        self._top_winrate = win_percent
         self.darea.queue_draw()
 
     # Coordinate conversions
@@ -165,7 +182,6 @@ class BoardView(Gtk.Box):
         self._cell = cell
         self._board_origin_x = x0
         self._board_origin_y = y0
-
 
     # Drawing helpers
     def _draw_ghost(self, cr: cairo.Context):

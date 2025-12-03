@@ -27,6 +27,22 @@ class MainWindow(Gtk.ApplicationWindow):
         # Создаём контроллер сразу — он может понадобиться в callback'ах загрузки
         self.controller = Controller(board_view)
         print("[main_app] controller id:", id(self.controller))
+        # propagate controller reference to game_tab so save can resolve authoritative GameTree
+        try:
+            if hasattr(self, "game_tab") and self.game_tab is not None:
+                try:
+                    self.game_tab.set_controller(self.controller)
+                except Exception as e:
+                    print("[WARN] main_app: game_tab.set_controller raised:", e)
+                # if controller already has a game_tree, propagate it
+                try:
+                    if getattr(self.controller, "tree", None) and getattr(self.controller.tree, "game_tree", None):
+                        self.game_tab.set_game_tree(self.controller.tree.game_tree)
+                        print("[main_app] propagated game_tree to game_tab id:", id(self.controller.tree.game_tree))
+                except Exception as e:
+                    print("[WARN] main_app: propagating game_tree to game_tab raised:", e)
+        except Exception as e:
+            print("[WARN] main_app: error while wiring game_tab/controller:", e)
 
         # Теперь строим analysis_box (внутри него создаётся TreeCanvas и кнопки)
         analysis_box = self.get_analysis_box(board_view)
@@ -43,9 +59,27 @@ class MainWindow(Gtk.ApplicationWindow):
         vbox.append(self.notebook)
         self.set_child(vbox)
 
-        self.controller.tree.load(self.game_tab.get_game_tree())
         # attach tree canvas to controller (контроллер будет обновлять дерево при необходимости)
         self.controller.attach_tree_canvas(self.tree_canvas)
+        # If GameTab already has a GameTree, load it into the controller safely.
+        try:
+            gt = None
+            try:
+                gt = self.game_tab.get_game_tree()
+            except Exception as e:
+                gt = None
+            if gt is not None:
+                try:
+                    # prefer controller.load_game_tree if implemented
+                    if hasattr(self.controller, "load_game_tree"):
+                        self.controller.load_game_tree(gt)
+                    # fallback to older tree.load API if present
+                    elif getattr(self.controller, "tree", None) and hasattr(self.controller.tree, "load"):
+                        self.controller.tree.load(gt)
+                except Exception as e:
+                    print("[WARN] main_app: failed to load GameTree into controller:", e)
+        except Exception as e:
+            print("[WARN] main_app: unexpected error while wiring controller tree:", e)
 
         # подключаем кнопки навигации
         self._wire_nav_buttons()
@@ -105,6 +139,21 @@ class MainWindow(Gtk.ApplicationWindow):
         controls_box.set_halign(Gtk.Align.CENTER)
         # создаём GameTab (логика) и кнопки, которые вызывают его методы
         self.game_tab = GameTab()
+        # сразу привязываем контроллер к game_tab, чтобы GameTab мог резолвить authoritative GameTree
+        try:
+            try:
+                self.game_tab.set_controller(self.controller)
+            except Exception as e:
+                print("[WARN] main_app: game_tab.set_controller raised:", e)
+            # если контроллер уже содержит дерево — передаём его в game_tab
+            try:
+                if getattr(self.controller, "tree", None) and getattr(self.controller.tree, "game_tree", None):
+                    self.game_tab.set_game_tree(self.controller.tree.game_tree)
+                    print("[main_app] propagated game_tree to game_tab id:", id(self.controller.tree.game_tree))
+            except Exception as e:
+                print("[WARN] main_app: propagating game_tree to game_tab raised:", e)
+        except Exception as e:
+            print("[WARN] main_app: error while wiring game_tab/controller:", e)
 
         btn_open = Gtk.Button(label="Open SGF")
         btn_save = Gtk.Button(label="Save SGF")
@@ -116,8 +165,22 @@ class MainWindow(Gtk.ApplicationWindow):
         tree_scroller = Gtk.ScrolledWindow()
         tree_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self.tree_canvas = TreeCanvas(node_radius=3, level_vgap=24, sibling_hgap=12)
-        print("[MainWindow] init setting tree root", id(self.tree_canvas.root), "to", id(self.game_tab.get_game_tree().root))
-        self.tree_canvas.set_tree_root(self.game_tab.get_game_tree().root)
+        # безопасно привязываем root: game_tab может ещё не иметь game_tree
+        try:
+            gt = None
+            try:
+                gt = self.game_tab.get_game_tree()
+            except Exception as e:
+                print("[WARN] MainWindow: game_tab.get_game_tree() raised:", e)
+                gt = None
+
+            if gt is None:
+                print("[MainWindow] game_tab has no GameTree yet; skipping tree root wiring")
+            else:
+                print("[MainWindow] init setting tree root", id(self.tree_canvas.root), "to", id(gt.root))
+                self.tree_canvas.set_tree_root(gt.root)
+        except Exception as e:
+            print("[WARN] MainWindow: failed to set tree root:", e)
         tree_scroller.set_size_request(320, -1)
         tree_scroller.set_hexpand(False)
         tree_scroller.set_child(self.tree_canvas)

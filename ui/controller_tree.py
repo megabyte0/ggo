@@ -179,6 +179,15 @@ class TreeAdapter:
         """
         if self.game_tree is None:
             self.game_tree = GameTree()
+        # ensure game_tree.root exists
+        if getattr(self.game_tree, "root", None) is None:
+            try:
+                r = Node(parent=None)
+                setattr(self.game_tree, "root", r)
+                if DEBUG:
+                    print("[DBG fix] created missing game_tree.root id:", id(r))
+            except Exception as e:
+                print("[DBG fix] failed to create root:", e)
 
         root = self.game_tree.root
 
@@ -275,6 +284,29 @@ class TreeAdapter:
         node = self.game_tree.add_move(parent, color, coord, props=props, is_variation=is_variation)
         if DEBUG:
             print("[TreeAdapter] add_move parent resolved to:", parent, "-> new node:", node)
+        # debug: print ids and parent path
+        try:
+            print("[DBG add_move] TreeAdapter id:", id(self), "game_tree id:", id(getattr(self, 'game_tree', None)))
+            print("[DBG add_move] parent id:", id(parent) if parent else None, "new_node id:", id(node), "props:", getattr(node, 'props', None))
+            cur = parent
+            chain = []
+            while cur is not None:
+                mv = None
+                if hasattr(cur, "get_prop"):
+                    b = cur.get_prop("B"); w = cur.get_prop("W")
+                    if b and len(b)>0: mv = f"B {b[0]}"
+                    elif w and len(w)>0: mv = f"W {w[0]}"
+                else:
+                    for k, vals in getattr(cur, "props", []):
+                        if k in ("B","W") and vals:
+                            mv = f"{k} {vals[0]}"
+                            break
+                chain.append(mv or "(no-move)")
+                cur = getattr(cur, "parent", None)
+            chain.reverse()
+            print("[DBG add_move] parent path:", " -> ".join(chain))
+        except Exception:
+            pass
         return node
 
     def find_last_mainline_node(self) -> Optional[Node]:

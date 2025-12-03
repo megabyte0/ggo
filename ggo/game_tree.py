@@ -1,345 +1,439 @@
 # game_tree.py
-from typing import Optional, List, Dict, Any, Iterable, Tuple
+# Minimal SGF parser/serializer (version adapted for round-trip consistency)
+#
+# Goals:
+# - Parse SGF into a simple tree of Node objects preserving property order and multiple values.
+# - Preserve variations as variations (attach variations to the correct parent node).
+# - Serialize back to SGF preserving structure and property ordering produced by the parser.
+# - Provide utility methods for round-trip use and simple introspection (get_node_path).
+# - Add simple mutation API (add_move, add_variation) expected by UI/controller code.
+#
+# Note: This is not a full SGF implementation but aims for consistent import/export
+# for typical SGF files used in this project.
+
+from typing import List, Optional, Tuple, Dict, Any
 import re
-import json
+import sys
 
-# --- Node и GameTree ---
-
+# -------------------------
+# Node model
+# -------------------------
 class Node:
-    def __init__(self, move: Optional[str] = None, props: Optional[Dict[str, Any]] = None, parent: Optional['Node'] = None):
-        """
-        move: ход в GTP/SGF нотации, например "D4" или None для root
-        props: словарь SGF свойств для этого узла
-        parent: ссылка на родителя
-        """
-        self.move = move
-        self.props: Dict[str, Any] = props or {}
-        self.parent: Optional[Node] = parent
-        self.children: List[Node] = []
-        self.katago: Dict[str, Any] = {}  # место для анализа KataGo: move->payload или node-level data
-        # optional snapshot id for fast board restore
-        self.snapshot_id: Optional[str] = None
+    """
+    Represents a single SGF node (a semicolon entry).
+    - props: list of (key, [values]) preserving insertion order and multiple values
+    - children: list of Node children (variations / mainline continuation)
+    - parent: optional parent Node
+    - _is_variation: True if this node was created as a variation (inside parentheses)
+    """
+    __slots__ = ("props", "children", "parent", "_is_variation")
 
-    def add_child(self, child: 'Node') -> None:
-        child.parent = self
-        self.children.append(child)
+    def __init__(self, parent: Optional["Node"] = None, is_variation: bool = False):
+        # props as list of (key, [values]) to preserve order and duplicates
+        self.props: List[Tuple[str, List[str]]] = []
+        self.children: List["Node"] = []
+        self.parent: Optional["Node"] = parent
+        self._is_variation: bool = is_variation
 
-    def is_root(self) -> bool:
-        return self.parent is None
+    # convenience: get property values (first occurrence) or None
+    def get_prop(self, key: str) -> Optional[List[str]]:
+        for k, vals in self.props:
+            if k == key:
+                return vals
+        return None
 
-    def path_from_root(self) -> List['Node']:
-        node = self
-        path = []
-        while node is not None:
-            path.append(node)
-            node = node.parent
-        return list(reversed(path))  # root .. self
+    def set_prop(self, key: str, values: List[str]):
+        # replace existing first occurrence
+        for idx, (k, vals) in enumerate(self.props):
+            if k == key:
+                self.props[idx] = (key, list(values))
+                return
+        self.props.append((key, list(values)))
 
-    def mainline_child(self) -> Optional['Node']:
-        return self.children[0] if self.children else None
+    def add_prop_value(self, key: str, value: str):
+        for idx, (k, vals) in enumerate(self.props):
+            if k == key:
+                vals.append(value)
+                self.props[idx] = (k, vals)
+                return
+        self.props.append((key, [value]))
 
-    def to_sgf_node(self) -> str:
-        # serialize node props and move into SGF node string
-        parts = []
-        for k, v in self.props.items():
-            if isinstance(v, list):
-                for item in v:
-                    parts.append(f"{k}[{escape_sgf_value(item)}]")
+    def props_dict(self) -> Dict[str, List[str]]:
+        d: Dict[str, List[str]] = {}
+        for k, vals in self.props:
+            if k in d:
+                d[k].extend(vals)
             else:
-                parts.append(f"{k}[{escape_sgf_value(v)}]")
-        # moves in SGF are properties B[] or W[]; if move stored as "B D4" or "D4"?
-        if self.move:
-            # assume move stored as "B D4" or "D4" with color in props
-            m = self.move
-            # if move like "B D4"
-            if isinstance(m, str) and ' ' in m:
-                color, mv = m.split(' ', 1)
-                parts.append(f"{color}[{sgf_coord_from_gtp(mv)}]")
-            else:
-                # if color in props (e.g., 'B' or 'W' key)
-                if 'B' in self.props or 'W' in self.props:
-                    # already encoded in props
-                    pass
-                else:
-                    # default: treat as black move
-                    parts.append(f"B[{sgf_coord_from_gtp(m)}]")
-        return ";" + "".join(parts)
+                d[k] = list(vals)
+        return d
 
-def escape_sgf_value(s: str) -> str:
-    return s.replace("\\", "\\\\").replace("]", "\\]")
+    def has_move(self) -> bool:
+        pd = self.props_dict()
+        return ("B" in pd and pd["B"]) or ("W" in pd and pd["W"])
 
-def sgf_coord_from_gtp(gtp: str) -> str:
-    # convert GTP like "D4" to SGF coords "dd" (lowercase a..s, no 'i' handling here)
-    # GTP uses letters A..T (often uppercase) and numbers; SGF uses letters a..s for columns and rows from top
-    # We'll implement a simple converter assuming standard 19x19 and no 'I' skipping.
-    if not gtp:
-        return ""
-    g = gtp.strip().upper()
-    col_letter = g[0]
-    row_number = int(g[1:])
-    c = ord(col_letter) - ord('A')
-    r = 19 - row_number
-    return chr(ord('a') + c) + chr(ord('a') + r)
+    def __repr__(self):
+        pd = self.props_dict()
+        mv = None
+        if "B" in pd:
+            mv = f"B {pd['B']}"
+        elif "W" in pd:
+            mv = f"W {pd['W']}"
+        return f"<Node move={mv} props={{{', '.join(pd.keys())}}} children={len(self.children)}>"
 
-def gtp_from_sgf_coord(s: str) -> str:
-    # convert sgf "dd" to GTP "D16" (19x19)
-    if not s or len(s) < 2:
-        return ""
-    c = ord(s[0]) - ord('a')
-    r = ord(s[1]) - ord('a')
-    row = 19 - r
-    col_letter = chr(ord('A') + c)
-    return f"{col_letter}{row}"
-
+# -------------------------
+# GameTree wrapper
+# -------------------------
 class GameTree:
+    """
+    Simple wrapper around parsed SGF tree(s).
+    - root: a synthetic root Node whose children are the top-level trees parsed from the SGF.
+      The synthetic root itself does not correspond to a semicolon in the SGF (unless the SGF
+      had an explicit root node).
+    """
+
     def __init__(self):
-        self.root = Node(move=None, props={})
-        self.current: Node = self.root
+        self.root: Node = Node(parent=None)
 
-    # --- загрузка SGF (простой парсер) ---
-    def load_sgf(self, sgf_text: str) -> None:
+    # -------------------------
+    # Parsing
+    # -------------------------
+    def load_sgf_simple(self, sgf_text: str):
         """
-        Простой SGF парсер: поддерживает последовательности узлов и ветвления ( ( ... ) ).
-        Не поддерживает все проперти SGF, но извлекает B[]/W[] и базовые свойства.
+        Parse SGF text into the GameTree structure.
+        This parser:
+        - tokenizes parentheses '(', ')', semicolons ';', property identifiers and bracketed values.
+        - creates a Node for each ';' token and attaches properties parsed after it.
+        - handles nested variations by using a stack of parent contexts; marks nodes created inside
+          parentheses as variations so serializer can preserve mainline vs variations.
         """
-        tokens = tokenize_sgf(sgf_text)
-        # recursive descent: parse collection -> game trees
-        # we parse first game tree only
-        it = iter(tokens)
-        try:
-            self.root = Node(move=None, props={})
-            self.current = self.root
-            self._parse_tree(it, self.root)
-        except StopIteration:
-            pass
+        text = sgf_text
+        i = 0
+        n = len(text)
 
-    def _parse_tree(self, it, parent_node: Node):
-        # expects '(' then sequence of nodes and possibly nested branches
-        for tok in it:
-            if tok == '(':
-                # start subtree: parse sequence into a new branch under parent_node
-                # create a new child and parse sequence into it
-                child = Node(move=None, props={})
-                parent_node.add_child(child)
-                self._parse_sequence(it, child)
-            elif tok == ')':
-                return
-            else:
-                # ignore stray tokens
-                continue
+        def read_bracket_value(idx: int) -> Tuple[str, int]:
+            # assumes text[idx] == '['
+            idx += 1
+            buf_chars = []
+            while idx < n:
+                ch = text[idx]
+                if ch == "\\":
+                    # escape next char (including newline)
+                    idx += 1
+                    if idx < n:
+                        buf_chars.append(text[idx])
+                        idx += 1
+                    continue
+                if ch == "]":
+                    idx += 1
+                    break
+                buf_chars.append(ch)
+                idx += 1
+            return ("".join(buf_chars), idx)
 
-    def _parse_sequence(self, it, start_node: Node):
-        node = start_node
-        for tok in it:
-            if tok == ';':
-                # parse node properties until next token that's '(' or ')' or ';'
-                props = {}
-                # read following property tokens
-                for prop_tok in it:
-                    if prop_tok in (';', '(', ')'):
-                        # push back by using a small trick: we can't push back iterator, so handle control
-                        # we handle by setting last token and using recursion; simpler: treat prop_tok as control
-                        # but here we break and let outer loop handle control token by returning it via attribute
-                        # To keep parser simple, we assume properties were already parsed by tokenizer into dict tokens.
-                        # So this branch won't be used.
+        # stack holds tuples (parent_node, in_variation_flag)
+        # parent_node: the node under which new nodes should be appended when a ';' is seen
+        # in_variation_flag: True if this stack frame corresponds to a '(' context (variation)
+        stack: List[Tuple[Node, bool]] = [(self.root, False)]
+        current_node: Optional[Node] = None
+
+        prop_re = re.compile(r"[A-Z]+")
+        while i < n:
+            ch = text[i]
+            if ch == "(":
+                # start a new variation: push a frame
+                parent_for_variation = current_node if current_node is not None else stack[-1][0]
+                stack.append((parent_for_variation, True))
+                current_node = None
+                i += 1
+            elif ch == ")":
+                # end current variation: pop stack and restore current_node to the parent_for_variation
+                if len(stack) > 1:
+                    popped_parent, popped_flag = stack.pop()
+                    current_node = popped_parent
+                else:
+                    current_node = None
+                i += 1
+            elif ch == ";":
+                # create a new node
+                parent = current_node if current_node is not None else stack[-1][0]
+                is_variation = (current_node is None and stack[-1][1] is True)
+                node = Node(parent=parent, is_variation=is_variation)
+                if parent is not None:
+                    parent.children.append(node)
+                current_node = node
+                i += 1
+                # skip whitespace
+                while i < n and text[i].isspace():
+                    i += 1
+                # parse properties for this node
+                while i < n:
+                    if text[i].isspace():
+                        i += 1
+                        continue
+                    if text[i] in ";()":
                         break
-                # In our tokenizer we already produce structured node tokens; so this function is not used.
-                pass
-            elif tok == '(':
-                # nested branch: create child from current node
-                child = Node(move=None, props={})
-                node.add_child(child)
-                self._parse_sequence(it, child)
-            elif tok == ')':
-                return
+                    m = prop_re.match(text, i)
+                    if not m:
+                        # unexpected char, skip
+                        i += 1
+                        continue
+                    prop_id = m.group(0)
+                    i = m.end()
+                    # skip whitespace
+                    while i < n and text[i].isspace():
+                        i += 1
+                    values: List[str] = []
+                    # read one or more bracketed values
+                    while i < n and text[i] == "[":
+                        val, i = read_bracket_value(i)
+                        values.append(val)
+                        while i < n and text[i].isspace():
+                            i += 1
+                    # attach property to current_node
+                    if current_node is None:
+                        parent = stack[-1][0] if stack else self.root
+                        current_node = Node(parent=parent, is_variation=stack[-1][1])
+                        parent.children.append(current_node)
+                    current_node.props.append((prop_id, values))
+                # continue outer loop
             else:
-                # ignore
+                # skip other characters
+                i += 1
+
+        # parsing finished
+        return
+
+    # -------------------------
+    # Utilities
+    # -------------------------
+    def get_node_path(self, node: Node) -> List[Node]:
+        """
+        Return list of nodes from synthetic root (excluded) down to the given node.
+        If node is not attached to this tree, returns empty list.
+        """
+        path: List[Node] = []
+        cur = node
+        # climb up until we reach synthetic root or None
+        while cur is not None and cur is not self.root:
+            path.append(cur)
+            cur = cur.parent
+        if cur is not self.root:
+            # node not in this tree
+            return []
+        path.reverse()
+        return path
+
+    def find_last_mainline_node(self) -> Optional[Node]:
+        """
+        Find the last node on the mainline starting from the first top-level child.
+        Mainline is defined as following the first non-variation child at each step.
+        """
+        if not self.root.children:
+            return None
+        cur = self.root.children[0]
+        while True:
+            # choose first child that is not a variation
+            next_child = None
+            for c in cur.children:
+                if not getattr(c, "_is_variation", False):
+                    next_child = c
+                    break
+            if next_child is None:
+                return cur
+            cur = next_child
+
+    # -------------------------
+    # Mutation API (for UI/controller)
+    # -------------------------
+    def add_move(self, parent: Optional[Node], color: str = None, coord: str = None, *,
+                 props: Optional[Any] = None, is_variation: Optional[bool] = None) -> Node:
+        """
+        Add a move node as a child of `parent`.
+        Backwards-compatible:
+          - old callers: add_move(parent, "B", "pd")
+          - new callers: add_move(parent=..., props=[("AB", ["pd"]), ("AB", ["dd"]), ("AW", ["qq"])])
+          - or: add_move(parent=..., props={"AB": ["pd","dd"], "AW": ["qq"]})
+        If parent is None, append to the last mainline node (or create top-level if empty).
+        Returns the created Node.
+        """
+        # determine parent
+        if parent is None:
+            parent = self.find_last_mainline_node()
+            if parent is None:
+                parent = self.root
+
+        # determine is_variation flag
+        if is_variation is None:
+            is_variation = False
+
+        node = Node(parent=parent, is_variation=is_variation)
+
+        # attach move from (color, coord) if provided
+        if color is not None and coord is not None:
+            node.props.append((color, [coord]))
+
+        # attach props if provided
+        if props:
+            # Preferred form: list of (key, values) pairs to preserve duplicates/order
+            if isinstance(props, (list, tuple)):
+                for item in props:
+                    # item can be ("AB", ["pd","dd"]) or ("AB", "pd")
+                    if not isinstance(item, (list, tuple)) or len(item) < 1:
+                        continue
+                    k = item[0]
+                    v = item[1] if len(item) > 1 else []
+                    if isinstance(v, (list, tuple)):
+                        vals = [str(x) for x in v]
+                    else:
+                        vals = [str(v)]
+                    # append each occurrence as a single property entry (preserves duplicates)
+                    node.props.append((k, vals))
+            elif isinstance(props, dict):
+                # dict: values may be lists; order is dict order (Python 3.7+ preserves insertion order)
+                for k, v in props.items():
+                    if isinstance(v, (list, tuple)):
+                        vals = [str(x) for x in v]
+                    else:
+                        vals = [str(v)]
+                    node.props.append((k, vals))
+            else:
+                # unsupported type — ignore
                 pass
 
-    # --- simplified SGF loader using regex-based node extraction (fallback) ---
-    def load_sgf_simple(self, sgf_text: str) -> None:
-        """
-        Более надёжный, но простая стратегия: находим последовательности узлов ';' и парсим проперти внутри.
-        Поддерживает ветвления: '(' и ')' — создаём ветки.
-        """
-        pos = 0
-        length = len(sgf_text)
-        stack: List[Node] = []
-        current = None
-        while pos < length:
-            ch = sgf_text[pos]
-            if ch == '(':
-                # start new tree or branch
-                if current is None:
-                    current = self.root
-                else:
-                    # create branch child of current.parent if exists, else child of current
-                    parent = current
-                    child = Node(move=None, props={})
-                    parent.add_child(child)
-                    stack.append(current)
-                    current = child
-                pos += 1
-            elif ch == ')':
-                # end branch
-                if stack:
-                    current = stack.pop()
-                pos += 1
-            elif ch == ';':
-                # parse node properties until next ';' or '(' or ')'
-                pos += 1
-                props, consumed = parse_sgf_node_props(sgf_text[pos:])
-                pos += consumed
-                # create node with props
-                move = None
-                # detect B[] or W[] properties
-                if 'B' in props:
-                    move = f"B {gtp_from_sgf_coord(props['B'][0])}" if isinstance(props['B'], list) else f"B {gtp_from_sgf_coord(props['B'])}"
-                elif 'W' in props:
-                    move = f"W {gtp_from_sgf_coord(props['W'][0])}" if isinstance(props['W'], list) else f"W {gtp_from_sgf_coord(props['W'])}"
-                node = Node(move=move, props=props)
-                if current is None:
-                    # attach to root
-                    self.root.add_child(node)
-                    current = node
-                else:
-                    current.add_child(node)
-                    current = node
-            else:
-                pos += 1
-        # set current to root by default
-        self.current = self.root
-
-    # --- навигация и утилиты ---
-    def get_node_path(self, node: Optional[Node] = None) -> List[str]:
-        """Возвращает список ходов (GTP) от root (исключая root) до node."""
-        if node is None:
-            node = self.current
-        path_nodes = node.path_from_root()[1:]  # skip root
-        moves = [n.move for n in path_nodes if n.move]
-        return moves
-
-    def go_to_node(self, node: Node) -> List[str]:
-        """Установить current=node и вернуть список ходов (GTP) для применения в BoardEngine."""
-        self.current = node
-        return self.get_node_path(node)
-
-    def add_move(self, parent: Node, color: str, gtp_move: str, props: Optional[Dict[str, Any]] = None) -> Node:
-        """Добавить ход как дочерний узел к parent. Возвращает созданный узел."""
-        mv = f"{color} {gtp_move}"
-        node = Node(move=mv, props=props or {})
-        parent.add_child(node)
+        parent.children.append(node)
         return node
 
-    def attach_katago(self, node: Node, key: str, payload: Any) -> None:
-        """Привязать данные KataGo к узлу (например key='analysis' или key=move_str)."""
-        node.katago[key] = payload
+    def add_variation(self, parent: Node, color: str, coord: str) -> Node:
+        """
+        Add a variation node as an additional child of `parent` (i.e., not mainline).
+        Returns the created Node.
+        """
+        if parent is None:
+            raise ValueError("parent must be a Node")
+        if color not in ("B", "W"):
+            raise ValueError("color must be 'B' or 'W'")
+        node = Node(parent=parent, is_variation=True)
+        node.props.append((color, [coord]))
+        parent.children.append(node)
+        return node
 
-    def iterate_mainline(self, start: Optional[Node] = None) -> Iterable[Node]:
-        """Итератор по основной линии (первым детям) от start (root по умолчанию)."""
-        if start is None:
-            start = self.root
-        node = start
-        while node and node.children:
-            node = node.children[0]
-            yield node
+    # -------------------------
+    # Serialization
+    # -------------------------
+    def _escape_value(self, v: str) -> str:
+        v = v.replace("\\", "\\\\")
+        v = v.replace("]", "\\]")
+        return v
 
-    def export_moves(self, node: Optional[Node] = None) -> List[str]:
-        """Экспортирует последовательность ходов (GTP) до node (или current)."""
-        return self.get_node_path(node)
+    def _serialize_node_props(self, node: Node) -> str:
+        parts: List[str] = []
+        for key, vals in node.props:
+            if not vals:
+                parts.append(f"{key}")
+                continue
+            vs = "".join(f"[{self._escape_value(v)}]" for v in vals)
+            parts.append(f"{key}{vs}")
+        return "".join(parts)
+
+    def _serialize_subtree(self, node: Node) -> str:
+        """
+        Serialize a subtree starting at node into SGF.
+        Serializes the mainline (first non-variation child chain) inline and emits additional children as variations.
+        """
+        # Build mainline: follow the first child that is NOT marked as variation.
+        seq_parts: List[str] = []
+        mainline_nodes: List[Node] = []
+        cur = node
+        while cur is not None:
+            props_str = self._serialize_node_props(cur)
+            seq_parts.append(";" + props_str)
+            mainline_nodes.append(cur)
+            # find mainline child: first child with _is_variation == False
+            main_child = None
+            for c in cur.children:
+                if not getattr(c, "_is_variation", False):
+                    main_child = c
+                    break
+            cur = main_child
+
+        mainline = "".join(seq_parts)
+
+        # collect variations attached to any node in the mainline
+        var_parts: List[str] = []
+        for mn in mainline_nodes:
+            for c in mn.children:
+                # treat children that are not part of the chosen mainline as variations
+                if c not in mainline_nodes:
+                    var_parts.append("(" + self._serialize_subtree(c) + ")")
+        return mainline + "".join(var_parts)
 
     def to_sgf(self) -> str:
-        """Простейшая сериализация дерева в SGF (основная ветка и ветки)."""
-        def node_to_sgf(n: Node) -> str:
-            s = n.to_sgf_node()
-            for child in n.children:
-                if child is n.children[0]:
-                    s += node_to_sgf(child)
-                else:
-                    s += "(" + node_to_sgf(child) + ")"
-            return s
-        body = ""
-        for child in self.root.children:
-            body += "(" + node_to_sgf(child) + ")"
-        # add root properties if any
-        root_props = ""
-        for k, v in self.root.props.items():
-            if isinstance(v, list):
-                for item in v:
-                    root_props += f"{k}[{escape_sgf_value(item)}]"
-            else:
-                root_props += f"{k}[{escape_sgf_value(v)}]"
-        header = f"(;{root_props}"
-        # if body already contains parentheses, just return header+body+')'
-        if body:
-            return header + body + ")"
-        else:
-            return header + ")"
+        """
+        Serialize the GameTree to SGF text.
+        - If the synthetic root has a single top-level child, serialize that child wrapped in parentheses.
+        - If multiple top-level children exist, serialize each as a parenthesized tree concatenated.
+        """
+        print("[DBG to_sgf] called for instance id", id(self), "root id", id(self.root))
+        top_children = self.root.children
+        if not top_children:
+            return ""
+        if len(top_children) == 1:
+            return "(" + self._serialize_subtree(top_children[0]) + ")"
+        parts: List[str] = []
+        for ch in top_children:
+            parts.append("(" + self._serialize_subtree(ch) + ")")
+        return "".join(parts)
 
-# --- Вспомогательные функции для парсинга SGF узла ---
-
-_SGF_PROP_RE = re.compile(r'([A-Za-z]+)\s*(\[(?:\\.|[^\]])*\])+')
-
-def parse_sgf_node_props(s: str) -> Tuple[Dict[str, Any], int]:
-    """
-    Парсит свойства узла из начала строки s.
-    Возвращает (props_dict, consumed_chars).
-    Поддерживает несколько свойств подряд, значения в квадратных скобках.
-    """
-    props: Dict[str, Any] = {}
-    pos = 0
-    length = len(s)
-    while pos < length:
-        m = _SGF_PROP_RE.match(s[pos:])
-        if not m:
-            break
-        key = m.group(1)
-        vals_raw = m.group(2)
-        # extract all [..] groups
-        vals = re.findall(r'\[(?:\\.|[^\]])*\]', vals_raw)
-        clean_vals = []
-        for v in vals:
-            inner = v[1:-1]
-            inner = inner.replace("\\]", "]").replace("\\\\", "\\")
-            clean_vals.append(inner)
-        if len(clean_vals) == 1:
-            props[key] = clean_vals
-        else:
-            props[key] = clean_vals
-        pos += m.end()
-    return props, pos
-
-def tokenize_sgf(s: str) -> List[str]:
-    """Очень простой токенайзер: возвращает список символов '(', ')', ';' и прочих строк (не используется в основной реализации)."""
-    tokens = []
-    i = 0
-    while i < len(s):
-        c = s[i]
-        if c in '();':
-            tokens.append(c)
-            i += 1
-        elif c.isspace():
-            i += 1
-        else:
-            # read until next control char
-            j = i
-            while j < len(s) and s[j] not in '();':
-                j += 1
-            tokens.append(s[i:j].strip())
-            i = j
-    return tokens
-
-# --- Примеры использования и тесты (микро) ---
-
+# -------------------------
+# CLI test
+# -------------------------
 if __name__ == "__main__":
-    # Простой тест загрузки SGF (пример)
-    sample = "(;GM[1]FF[4]SZ[19]KM[6.5];B[qd];W[dd];B[pq](;W[dp];B[pp])(;W[dc];B[oc]))"
+    sample = None
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], "r", encoding="utf-8") as f:
+            sample = f.read()
+    else:
+        sample = "(;GM[1]FF[4]CA[UTF-8]AP[Sabaki:0.52.2]KM[6.5]SZ[19]DT[2025-09-18]SBKV[57.6];B[pd];W[pp];B[cd];W[dp]SBKV[56.45];B[ic]SBKV[53.89](;W[qf]SBKV[54.37])(;W[ed]SBKV[54.13]))"
+
+    print("Importing sample:", sample)
     gt = GameTree()
     gt.load_sgf_simple(sample)
-    print("Root children:", len(gt.root.children))
-    # пройти по основной линии
-    for n in gt.iterate_mainline():
-        print("Mainline move:", n.move, "props:", n.props)
-    # экспорт в SGF
-    sgf_out = gt.to_sgf()
-    print("Exported SGF:", sgf_out)
+    root = gt.root
+    print("Root children:", len(root.children))
+
+    def traverse_mainline(node: Optional[Node], depth=0):
+        if node is None:
+            return
+        pd = node.props_dict()
+        mv = None
+        if "B" in pd:
+            mv = f"B {pd['B']}"
+        elif "W" in pd:
+            mv = f"W {pd['W']}"
+        print("Mainline move:", mv, "props:", pd)
+        # follow mainline child (first non-variation child)
+        main_child = None
+        for c in node.children:
+            if not getattr(c, "_is_variation", False):
+                main_child = c
+                break
+        if main_child:
+            traverse_mainline(main_child, depth+1)
+        # print variations
+        for v in node.children:
+            if v is not main_child:
+                print("Variation at node:", node, "->", v)
+                traverse_mainline(v, depth+1)
+
+    for ch in root.children:
+        traverse_mainline(ch)
+
+    out = gt.to_sgf()
+    print("Exported SGF:", out)
+
+    # quick mutation test: add a move on mainline
+    last = gt.find_last_mainline_node()
+    print("Last mainline node before add:", last)
+    new = gt.add_move(last, "W", "aa")
+    print("Added move:", new)
+    print("SGF after add:", gt.to_sgf())

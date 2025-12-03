@@ -3,45 +3,51 @@ from typing import Any
 
 import gi
 
-from ui.tree_canvas import TreeCanvas
-
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
 
+from ui.tree_canvas import TreeCanvas
+from ui.game_tab import GameTab
+
 from ui.board_view import BoardView
-from ui.controller import BoardController
+from ui.controller import Controller
 
 class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="ggo — modular UI")
         self.set_default_size(1200, 800)
 
-        notebook = Gtk.Notebook()
+        # Notebook
+        self.notebook = Gtk.Notebook()
 
+        # Создаём board_view и контроллер раньше, чтобы callback'и могли к ним обращаться
         board_view = BoardView(board_size=19)
         print("main_app board_view id:", id(board_view))
+
+        # Создаём контроллер сразу — он может понадобиться в callback'ах загрузки
+        self.controller = Controller(board_view)
+        print("[main_app] controller id:", id(self.controller))
+
+        # Теперь строим analysis_box (внутри него создаётся TreeCanvas и кнопки)
         analysis_box = self.get_analysis_box(board_view)
 
-        notebook.append_page(analysis_box, Gtk.Label(label="Analysis"))
+        # Добавляем вкладки
+        self.notebook.append_page(analysis_box, Gtk.Label(label="Analysis"))
 
-        # Tab 2: IGS list
         igs_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         igs_box.append(Gtk.Label(label="IGS games list (stub)"))
-        notebook.append_page(igs_box, Gtk.Label(label="IGS"))
+        self.notebook.append_page(igs_box, Gtk.Label(label="IGS"))
 
         # Собираем финальную вертикальную коробку и один раз устанавливаем её как child окна
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        vbox.append(notebook)
+        vbox.append(self.notebook)
         self.set_child(vbox)
 
-        # Создаём контроллер и связываем UI элементы с ним
-        self.controller = BoardController(board_view)
-        print("[main_app] controller id:", id(self.controller))
-
+        self.controller.tree.load(self.game_tab.get_game_tree())
+        # attach tree canvas to controller (контроллер будет обновлять дерево при необходимости)
         self.controller.attach_tree_canvas(self.tree_canvas)
-        # initial populate (controller сделает rebuild_tree_store)
 
-        # подключаем кнопки навигации (они созданы в get_analysis_box и сохранены в self)
+        # подключаем кнопки навигации
         self._wire_nav_buttons()
 
     def get_analysis_box(self, board_view) -> Any:
@@ -94,22 +100,96 @@ class MainWindow(Gtk.ApplicationWindow):
         right_panel.append(Gtk.Label(label="Score chart"))
         right_panel.append(Gtk.Label(label="Diff chart"))
 
+        # --- Game controls (Open/Save) placed above tree ---
+        controls_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        controls_box.set_halign(Gtk.Align.CENTER)
+        # создаём GameTab (логика) и кнопки, которые вызывают его методы
+        self.game_tab = GameTab()
+
+        btn_open = Gtk.Button(label="Open SGF")
+        btn_save = Gtk.Button(label="Save SGF")
+        controls_box.append(btn_open)
+        controls_box.append(btn_save)
+        right_panel.append(controls_box)
+
         # tree under charts: use TreeCanvas inside scrolled window
         tree_scroller = Gtk.ScrolledWindow()
         tree_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self.tree_canvas = TreeCanvas(node_radius=3, level_vgap=24, sibling_hgap=12)
+        print("[MainWindow] init setting tree root", id(self.tree_canvas.root), "to", id(self.game_tab.get_game_tree().root))
+        self.tree_canvas.set_tree_root(self.game_tab.get_game_tree().root)
         tree_scroller.set_size_request(320, -1)
         tree_scroller.set_hexpand(False)
         tree_scroller.set_child(self.tree_canvas)
         right_panel.append(tree_scroller)
         analysis_box.append(right_panel)
 
+        # подключаем кнопки Open/Save к game_tab, передаём окно как parent
+        btn_open.connect("clicked", lambda w: self.game_tab.open_sgf_dialog(self))
+        btn_save.connect("clicked", lambda w: self.game_tab.save_sgf_dialog(self))
+
+        # callback: переименовать вкладку
+        def rename_tab(basename: str):
+            try:
+                self.notebook.set_tab_label_text(analysis_box, basename)
+            except Exception:
+                pass
+
+        # on_game_loaded: надёжно обновляет TreeCanvas и уведомляет контроллер
+        def on_game_loaded(gt):
+            # лог для отладки
+            print("[MainWindow] on_game_loaded called. gt:", type(gt), "root:", getattr(gt, "root", None))
+            if gt is None:
+                print("[MainWindow] GameTree is None — parser failed or not available")
+                return
+
+            root = getattr(gt, "root", None)
+            if root is None:
+                print("[MainWindow] gt.root is None — nothing to show")
+                return
+
+            # Попробуем вывести количество детей (если есть)
+            try:
+                children = getattr(root, "children", None)
+                cnt = len(children) if children is not None else 0
+                print(f"[MainWindow] root children count: {cnt}")
+            except Exception as e:
+                print("[MainWindow] error reading root.children:", e)
+
+            # Обновляем TreeCanvas
+            try:
+                print("[MainWindow] setting tree root", id(self.tree_canvas.root), "to", id(root))
+                self.tree_canvas.set_tree_root(root)
+                # на всякий случай форсируем пересчёт и перерисовку
+                try:
+                    self.tree_canvas._recompute_layout()
+                except Exception:
+                    pass
+                self.tree_canvas.queue_draw()
+                print("[MainWindow] tree_canvas updated")
+            except Exception as e:
+                print("[MainWindow] failed to update tree_canvas:", e)
+
+            # Уведомляем контроллер, если у него есть метод загрузки дерева
+            try:
+                if hasattr(self.controller, "load_game_tree"):
+                    self.controller.load_game_tree(gt)
+                    print("[MainWindow] controller.load_game_tree called")
+                    # после load_game_tree или после tree.load(gt)
+                    # print("[DBG controller] controller.tree id:", id(self.tree), "tree.game_tree id:",
+                    #       id(self.tree.game_tree) if getattr(self.tree, 'game_tree', None) else None)
+                    
+            except Exception as e:
+                print("[MainWindow] controller.load_game_tree failed:", e)
+
+        # регистрируем callback'и
+        self.game_tab.set_rename_tab_callback(rename_tab)
+        self.game_tab.set_on_load_callback(on_game_loaded)
+
         return analysis_box
 
     def _wire_nav_buttons(self):
         # кнопки уже созданы в get_analysis_box и сохранены в self
-        # подключаем их к методам контроллера
-        # контроллер должен реализовать go_first/go_prev/go_next/go_last
         self.btn_first.connect("clicked", lambda w: self.controller.go_first())
         self.btn_prev.connect("clicked", lambda w: self.controller.go_prev())
         self.btn_next.connect("clicked", lambda w: self.controller.go_next())

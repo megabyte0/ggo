@@ -145,7 +145,38 @@ class TreeCanvas(Gtk.DrawingArea):
         # store hit map
         self._hit_map = {i: dn.node for i, dn in enumerate(self._draw_nodes)}
 
-    # helper: draw root diamond at given _DrawNode
+    # helper: determine if node has a move
+    def _node_has_move(self, node) -> bool:
+        if node is None:
+            return False
+        # Prefer Node.get_prop if available
+        if hasattr(node, "get_prop"):
+            b = node.get_prop("B")
+            w = node.get_prop("W")
+            if b and len(b) > 0:
+                return True
+            if w and len(w) > 0:
+                return True
+            return False
+        # Fallback: try props_dict or props as list-of-pairs
+        props = getattr(node, "props", None)
+        if props is None:
+            return False
+        # if props is a dict-like
+        if isinstance(props, dict):
+            return bool(props.get("B") or props.get("W"))
+        # if props is list-of-pairs
+        try:
+            for k, vals in props:
+                if k == "B" and vals:
+                    return True
+                if k == "W" and vals:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    # helper: draw diamond at given _DrawNode
     def _draw_diamond(self, cr: cairo.Context, cx: float, cy: float, size: float,
                       fill_color=(1.0, 1.0, 1.0), stroke_color=(0.2,0.2,0.2), stroke_width=1.0):
         cr.save()
@@ -187,31 +218,27 @@ class TreeCanvas(Gtk.DrawingArea):
                 continue
             p = self._draw_nodes[pidx]
             c = self._draw_nodes[cidx]
-            # if parent is root and drawn as diamond, approximate bottom point by radius
             cr.move_to(p.x, p.y + p.radius)
             cr.line_to(c.x, c.y - c.radius)
             cr.stroke()
 
-        # draw nodes: filled small circles, except root drawn as diamond
+        # draw nodes: filled small circles, except nodes without move drawn as diamond
         cr.new_path()  # clear any leftover path to avoid artifacts
         for dn in self._draw_nodes:
-            is_root = (dn.node is self.root)
-            selected = (dn.node is self.selected_node)
+            node = dn.node
+            has_move = self._node_has_move(node)
+            selected = (node is self.selected_node)
 
-            if is_root:
-                # diamond fill color and stroke
+            if not has_move:
+                # draw diamond for nodes without move
                 fill_col = (0.98, 0.98, 0.98)
                 stroke_col = (0.2, 0.2, 0.2)
-                # if selected, change fill slightly and draw highlight
                 if selected:
-                    fill_col = (0.9, 0.95, 1.0)  # subtle highlight tint
+                    fill_col = (0.9, 0.95, 1.0)
                 self._draw_diamond(cr, dn.x, dn.y, dn.radius, fill_color=fill_col, stroke_color=stroke_col, stroke_width=1.0)
-
-                # outline highlight if selected
                 if selected:
                     cr.set_line_width(1.5)
                     cr.set_source_rgb(0.05, 0.5, 0.95)
-                    # draw a slightly larger diamond outline
                     self._draw_diamond(cr, dn.x, dn.y, dn.radius + 2.0, fill_color=fill_col, stroke_color=(0.05,0.5,0.95), stroke_width=1.5)
             else:
                 # normal circular node
@@ -234,7 +261,7 @@ class TreeCanvas(Gtk.DrawingArea):
 
     # Hit testing
     def _hit_test(self, x: float, y: float) -> Optional[Any]:
-        # For diamond root, distance test still uses radius circle approximation.
+        # For diamond nodes we still use circular approximation for hit testing.
         for dn in self._draw_nodes:
             dx = x - dn.x
             dy = y - dn.y

@@ -1,10 +1,14 @@
 # ui/tree_canvas.py
 import gi
+
+from ggo.game_tree import Node
+
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Pango, PangoCairo, GLib
 import cairo
 import math
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any, List, Callable
+
 
 class _DrawNode:
     def __init__(self, node_obj, x: float, y: float, radius: float):
@@ -14,7 +18,13 @@ class _DrawNode:
         self.radius = radius
 
 class TreeCanvas(Gtk.DrawingArea):
-    def __init__(self, node_radius: int = 6, level_vgap: int = 80, sibling_hgap: int = 24):
+    def __init__(
+            self,
+            node_radius: int = 3,
+            level_vgap: int = 24,
+            sibling_hgap: int = 12,
+            get_root: Callable[[], Node] = lambda: None,
+    ):
         super().__init__()
         self.set_draw_func(self._on_draw, None)
         self.set_hexpand(True)
@@ -26,13 +36,14 @@ class TreeCanvas(Gtk.DrawingArea):
         self.sibling_hgap = sibling_hgap
 
         # tree data (GameTree root node)
-        self.root = None
+        self._get_root = get_root
+        # self.root = None
 
         # computed layout: list of _DrawNode and edges (parent_idx, child_idx)
         self._draw_nodes: List[_DrawNode] = []
-        self._edges: List[Tuple[int,int]] = []
+        self._edges: List[Tuple[int,int,bool]] = []
 
-        # selection: selected_node highlighted by outline (not by fill)
+        # selection: selected_node highlighted by outline
         self.selected_node = None
 
         # hit test map: index -> node
@@ -44,17 +55,18 @@ class TreeCanvas(Gtk.DrawingArea):
         self.add_controller(click)
 
     # Public API
-    def set_tree_root(self, root_node):
+    def set_tree_root(self):
         """Передать корень GameTree (Node)."""
-        self.root = root_node
+        # self.root = root_node
         self._recompute_layout()
         # если доска пустая (корень без детей), выделяем корень
-        if self.root is not None and not getattr(self.root, 'children', None):
-            self.selected_node = self.root
+        root = self._get_root()
+        if root is not None and not getattr(root, 'children', None):
+            self.selected_node = root
         self.queue_draw()
 
     def clear(self):
-        self.root = None
+        # self.root = None
         self._draw_nodes = []
         self._edges = []
         self.selected_node = None
@@ -73,7 +85,7 @@ class TreeCanvas(Gtk.DrawingArea):
         self._draw_nodes = []
         self._edges = []
         self._hit_map = {}
-        if self.root is None:
+        if self._get_root() is None:
             return
 
         def build_levels(node, depth, levels):
@@ -85,7 +97,7 @@ class TreeCanvas(Gtk.DrawingArea):
 
         levels: List[List[Any]] = []
         # start from root so root becomes level 0
-        build_levels(self.root, 0, levels)
+        build_levels(self._get_root(), 0, levels)
 
         # compute widths per level
         level_widths = []
@@ -108,11 +120,14 @@ class TreeCanvas(Gtk.DrawingArea):
                 node_positions[node] = (cx, cy)
                 x += 2*self.node_radius + self.sibling_hgap
 
+        self.pixels_height = y0 + len(levels) * self.level_vgap + self.node_radius
+        self.set_size_request(-1, self.pixels_height)
+
         # create draw nodes in a deterministic traversal (preorder)
         index_map = {}
         self._draw_nodes = []
         idx = 0
-        def add_nodes_recursive(node):
+        def add_nodes_recursive(node: Node):
             nonlocal idx
             if node not in node_positions:
                 for ch in getattr(node, 'children', []):
@@ -125,11 +140,11 @@ class TreeCanvas(Gtk.DrawingArea):
             idx += 1
             for ch in getattr(node, 'children', []):
                 add_nodes_recursive(ch)
-        add_nodes_recursive(self.root)
+        add_nodes_recursive(self._get_root())
 
         # build edges using index_map
         self._edges = []
-        def add_edges(node):
+        def add_edges(node: Node):
             if node not in index_map:
                 for ch in getattr(node, 'children', []):
                     add_edges(ch)
@@ -138,9 +153,9 @@ class TreeCanvas(Gtk.DrawingArea):
             for ch in getattr(node, 'children', []):
                 if ch in index_map:
                     cidx = index_map[ch]
-                    self._edges.append((pidx, cidx))
+                    self._edges.append((pidx, cidx, False))
                 add_edges(ch)
-        add_edges(self.root)
+        add_edges(self._get_root())
 
         # store hit map
         self._hit_map = {i: dn.node for i, dn in enumerate(self._draw_nodes)}
@@ -209,10 +224,10 @@ class TreeCanvas(Gtk.DrawingArea):
             cr.show_text("Tree is empty")
             return
 
-        # draw edges (simple grey lines)
+        # draw edges (simple gray lines)
         cr.set_line_width(1.0)
         cr.set_source_rgb(0.75, 0.75, 0.75)
-        for pidx, cidx in self._edges:
+        for pidx, cidx, is_current in self._edges:
             # guard indices
             if not (0 <= pidx < len(self._draw_nodes) and 0 <= cidx < len(self._draw_nodes)):
                 continue

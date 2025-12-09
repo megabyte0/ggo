@@ -10,10 +10,14 @@
 #
 # Note: This is not a full SGF implementation but aims for consistent import/export
 # for typical SGF files used in this project.
-
+import os
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 import re
 import sys
+
+DEBUG = True
+
 
 # -------------------------
 # Node model
@@ -26,7 +30,7 @@ class Node:
     - parent: optional parent Node
     - _is_variation: True if this node was created as a variation (inside parentheses)
     """
-    __slots__ = ("props", "children", "parent", "_is_variation")
+    __slots__ = ("props", "children", "parent", "_is_variation", "is_current")
 
     def __init__(self, parent: Optional["Node"] = None, is_variation: bool = False):
         # props as list of (key, [values]) to preserve order and duplicates
@@ -34,6 +38,7 @@ class Node:
         self.children: List["Node"] = []
         self.parent: Optional["Node"] = parent
         self._is_variation: bool = is_variation
+        self.is_current: bool = False
 
     # convenience: get property values (first occurrence) or None
     def get_prop(self, key: str) -> Optional[List[str]]:
@@ -79,6 +84,7 @@ class Node:
         elif "W" in pd:
             mv = f"W {pd['W']}"
         return f"<Node move={mv} props={{{', '.join(pd.keys())}}} children={len(self.children)}>"
+
 
 # -------------------------
 # GameTree wrapper
@@ -384,6 +390,207 @@ class GameTree:
             parts.append("(" + self._serialize_subtree(ch) + ")")
         return "".join(parts)
 
+    def add_missing_game_props(self):
+        # --- normalization: ensure at least one game node under synthetic root ---
+        if self.root is None:
+            return
+
+        # If root already has children, we leave structure as-is
+        if getattr(self.root, "children", None):
+            if DEBUG:
+                print("[TreeAdapter] load: root already has children:", len(self.root.children))
+            return
+
+        # read defaults: prefer pyproject.toml project.name and project.version
+        defaults = self._defaults_from_pyproject()
+
+        # create a Node under synthetic root with canonical game properties
+        try:
+            node = Node(parent=self.root, is_variation=False)
+        except TypeError:
+            # older Node signature may not accept is_variation
+            node = Node(parent=self.root)
+
+        # canonical order of properties in SGF header
+        order = ["GM", "FF", "CA", "AP", "KM", "SZ", "DT"]
+        for k in order:
+            v = defaults.get(k)
+            if v is None:
+                continue
+            # append as single property entry preserving order
+            node.props.append((k, [v]))
+
+        # attach node to synthetic root
+        root.children.append(node)
+        node.parent = root
+
+        if DEBUG:
+            print("[TreeAdapter] load: created default game node under synthetic root with props:", node.props)
+
+    def _defaults_from_pyproject(self, path: str = "../pyproject.toml") -> dict:
+        """
+        Try to read project.name and project.version from pyproject.toml.
+        Fallback to sensible defaults if file not found or parsing fails.
+        Returns dict with keys: GM, FF, CA, AP, KM, SZ, DT
+        Note: GM is set to "<name> <version>" if available, else "1".
+        AP is set to "name:version" if available, else "ggo:0.1".
+        DT is current UTC date YYYY-MM-DD.
+        """
+        defaults = {}
+        name = None
+        version = None
+
+        print("[TreeAdapter] reading ", path, " at", os.getcwd())
+        # try tomllib (py3.11+), then toml package, then fallback
+        try:
+            try:
+                import tomllib  # Python 3.11+
+                if os.path.exists(path):
+                    with open(path, "rb") as f:
+                        data = tomllib.load(f)
+                else:
+                    data = {}
+            except Exception as e:
+                print("[TreeAdapter] failed to load pyproject.toml:", path, e)
+                # try toml package
+                try:
+                    import toml
+                    if os.path.exists(path):
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = toml.load(f)
+                    else:
+                        data = {}
+                except Exception as e:
+                    print("[TreeAdapter] failed to load pyproject.toml:", path, e)
+                    data = {}
+            # project table may be under 'project' (PEP 621) or under 'tool.poetry'
+            if isinstance(data, dict):
+                proj = data.get("project")
+                if proj and isinstance(proj, dict):
+                    name = proj.get("name")
+                    version = proj.get("version")
+                else:
+                    # poetry style
+                    tool = data.get("tool", {})
+                    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+                    if poetry and isinstance(poetry, dict):
+                        name = poetry.get("name")
+                        version = poetry.get("version")
+        except Exception as e:
+            print("[TreeAdapter] failed to load pyproject.toml:", path, e)
+            name = None
+            version = None
+
+        # build defaults
+        if name and version:
+            ap_val = f"{name}:{version}"
+        elif name:
+            ap_val = f"{name}:0.0"
+        else:
+            ap_val = "ggo:0.1"
+
+        defaults["GM"] = "1"  # str(gm_val)
+        defaults["FF"] = "4"
+        defaults["CA"] = "UTF-8"
+        defaults["AP"] = ap_val
+        defaults["KM"] = "6.5"
+        defaults["SZ"] = "19"
+        # UTC date
+        try:
+            dt = datetime.now(timezone.utc).date().isoformat()
+            defaults["DT"] = dt
+        except Exception:
+            defaults["DT"] = ""
+
+        if DEBUG:
+            print("[TreeAdapter] defaults_from_pyproject:", defaults, "pyproject read name/version:", name, version)
+
+        return defaults
+
+    def add_missing_game_props_1(self) -> Node:
+        root = self.root
+        # build defaults (minimal): GM from pyproject (name+version) if available, else "1"
+        gm = "1"
+        ap = "ggo:0.1"
+        try:
+            # try tomllib (py3.11+) then toml
+            import os
+            try:
+                import tomllib
+                if os.path.exists("pyproject.toml"):
+                    with open("pyproject.toml", "rb") as f:
+                        data = tomllib.load(f)
+                else:
+                    data = {}
+            except Exception:
+                try:
+                    import toml
+                    if os.path.exists("pyproject.toml"):
+                        with open("pyproject.toml", "r", encoding="utf-8") as f:
+                            data = toml.load(f)
+                    else:
+                        data = {}
+                except Exception:
+                    data = {}
+            name = None
+            version = None
+            if isinstance(data, dict):
+                proj = data.get("project")
+                if proj and isinstance(proj, dict):
+                    name = proj.get("name")
+                    version = proj.get("version")
+                else:
+                    tool = data.get("tool", {})
+                    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+                    if poetry and isinstance(poetry, dict):
+                        name = poetry.get("name")
+                        version = poetry.get("version")
+            if name and version:
+                gm = f"{name} {version}"
+                ap = f"{name}:{version}"
+            elif name:
+                gm = str(name)
+                ap = f"{name}:0.0"
+        except Exception:
+            pass
+
+        # create the game node and attach to root
+        try:
+            game_node = Node(parent=root, is_variation=False)
+        except TypeError:
+            game_node = Node(parent=root)
+        # canonical header props
+        from datetime import datetime, timezone
+        dt = datetime.now(timezone.utc).date().isoformat()
+        header_order = [("GM", [gm]), ("FF", ["4"]), ("CA", ["UTF-8"]), ("AP", [ap]), ("KM", ["6.5"]),
+                        ("SZ", ["19"]), ("DT", [dt])]
+        for k, vals in header_order:
+            game_node.props.append((k, list(vals)))
+        root.children.append(game_node)
+        game_node.parent = root
+        parent = game_node
+        return parent
+
+    def need_game_node(self) -> bool:
+        root: Node = self.root
+        need_game_node = False
+        if not getattr(root, "children", []):
+            need_game_node = True
+        else:
+            first = root.children[0]
+            # check if first child has a move (B/W)
+            has_move = False
+            for k, vals in getattr(first, "props", []):
+                if k in ("B", "W") and vals:
+                    has_move = True
+                    break
+            if not has_move:
+                # if first child is property-only, treat it as header: create a new game node
+                # and attach it after header (we keep header as properties on root if desired)
+                need_game_node = True
+        return need_game_node
+
+
 # -------------------------
 # CLI test
 # -------------------------
@@ -393,13 +600,14 @@ if __name__ == "__main__":
         with open(sys.argv[1], "r", encoding="utf-8") as f:
             sample = f.read()
     else:
-        sample = "(;GM[1]FF[4]CA[UTF-8]AP[Sabaki:0.52.2]KM[6.5]SZ[19]DT[2025-09-18]SBKV[57.6];B[pd];W[pp];B[cd];W[dp]SBKV[56.45];B[ic]SBKV[53.89](;W[qf]SBKV[54.37])(;W[ed]SBKV[54.13]))"
+        sample = "(;GM[1]FF[4]CA[UTF-8]AP[Sabaki:0.52.2]KM[6.5]SZ[19]DT[2025-12-04];B[pd](;W[dp];B[pp];W[pq];B[oq];W[dd];B[pr];W[qq];B[qr];W[jd];B[rq];W[qp];B[qo];W[rp];B[sp];W[ro];B[rn];W[so];B[sn])(;W[pp](;B[dp];W[dd])(;B[po];W[dp];B[op];W[dd];B[pq])))"
 
     print("Importing sample:", sample)
     gt = GameTree()
     gt.load_sgf_simple(sample)
     root = gt.root
     print("Root children:", len(root.children))
+
 
     def traverse_mainline(node: Optional[Node], depth=0):
         if node is None:
@@ -418,18 +626,20 @@ if __name__ == "__main__":
                 main_child = c
                 break
         if main_child:
-            traverse_mainline(main_child, depth+1)
+            traverse_mainline(main_child, depth + 1)
         # print variations
         for v in node.children:
             if v is not main_child:
                 print("Variation at node:", node, "->", v)
-                traverse_mainline(v, depth+1)
+                traverse_mainline(v, depth + 1)
+
 
     for ch in root.children:
         traverse_mainline(ch)
 
     out = gt.to_sgf()
     print("Exported SGF:", out)
+    print("Literally match:", str(out == sample))
 
     # quick mutation test: add a move on mainline
     last = gt.find_last_mainline_node()

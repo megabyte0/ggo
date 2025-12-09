@@ -1,7 +1,8 @@
 # ui/controller.py
-from typing import Any, List, Tuple, Optional
+from typing import Any, List, Tuple, Optional, Callable
 from gi.repository import GLib
 
+from ggo.game_tree import GameTree
 from ui.controller_board import BoardAdapter, DEBUG as BOARD_DEBUG
 from ui.controller_tree import TreeAdapter, DEBUG as TREE_DEBUG
 
@@ -15,9 +16,9 @@ class Controller:
     Facade controller that связывает BoardAdapter и TreeAdapter,
     а также TreeCanvas/TreeStore/BoardView.
     """
-    def __init__(self, board_view, board_size=19):
+    def __init__(self, board_view, board_size=19, get_game_tree : Callable[[], GameTree] = lambda: None):
         self.board = BoardAdapter(board_view, board_size=board_size)
-        self.tree = TreeAdapter()
+        self.tree = TreeAdapter(get_game_tree=get_game_tree)
         self.tree_canvas = None
         self.tree_store = None
         self.tree_view = None
@@ -27,8 +28,8 @@ class Controller:
             board_view.on_click(self._on_click)
             board_view.on_hover(self._on_hover)
             board_view.on_leave(self._on_leave)
-        except Exception:
-            pass
+        except Exception as e:
+            print("[Controller] failed to wire board view callbacks", e)
 
     # --- integration points ---
     def attach_tree_canvas(self, tree_canvas):
@@ -38,8 +39,8 @@ class Controller:
         except Exception:
             setattr(self.tree_canvas, "_on_node_selected_cb", self._on_tree_node_selected)
         # push current root if any
-        if DEBUG:
-            print("[Controller] attach_tree_canvas setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
+        # if DEBUG:
+        #     print("[Controller] attach_tree_canvas setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
         self._refresh_tree_canvas()
 
     def attach_tree_widgets(self, tree_store, tree_view):
@@ -50,16 +51,16 @@ class Controller:
         self._rebuild_tree_store()
 
     # --- loading SGF ---
-    def load_game_tree(self, gt):
+    def load_game_tree(self):
         """Called by MainWindow when SGF parsed. Keep reference and apply AB/AW and mainline."""
-        self.tree.load(gt)
+        self.tree.load()
         root = self.tree.get_root()
         self.current_node = root
         if DEBUG:
             print("[Controller] load_game_tree root children:", len(root.children) if root else None)
         # update canvas
-        if DEBUG:
-            print("[Controller] load_game_tree setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
+        # if DEBUG:
+        #     print("[Controller] load_game_tree setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
         self._refresh_tree_canvas()
         # apply AB/AW to board
         stones = self.tree.collect_ab_aw()
@@ -185,8 +186,8 @@ class Controller:
             if DEBUG:
                 # сразу после создания/получения node
                 print("[DBG add_move] Controller id: ", id(self), "TreeAdapter id:", id(self.tree), "game_tree id:",
-                      id(self.tree.game_tree), "root id:", id(self.tree.game_tree.root))
-                print("[DBG add_move] parent:", parent, "new_node:", new_node)
+                      id(self.tree.get_game_tree()), "root id:", id(self.tree.get_game_tree().root))
+                print("[DBG add_move] parent:", new_node.parent, "new_node:", new_node)
 
             # try to apply to board model
             rc = (r,c)
@@ -203,8 +204,8 @@ class Controller:
             # advance current node
             self.current_node = new_node
             # update tree canvas and store
-            if DEBUG:
-                print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
+            # if DEBUG:
+            #     print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
             self._refresh_tree_canvas()
             self._rebuild_tree_store()
             if self.tree_canvas:
@@ -215,8 +216,8 @@ class Controller:
             self.current_node = found
             moves = self.tree.get_node_path(found)
             self._apply_move_sequence_to_board(moves)
-            if DEBUG:
-                print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
+            # if DEBUG:
+            #     print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
             self._refresh_tree_canvas()
             if self.tree_canvas:
                 self.tree_canvas.select_node(found)
@@ -310,11 +311,11 @@ class Controller:
     def _refresh_tree_canvas(self):
         if self.tree_canvas and self.tree.get_root():
             try:
-                self.tree_canvas.set_tree_root(self.tree.get_root())  # !
+                self.tree_canvas.set_tree_root()  # !
                 if self.current_node:
                     self.tree_canvas.select_node(self.current_node)
-            except Exception:
-                pass
+            except Exception as e:
+                print("[Controller] refresh_tree_canvas:", e)
 
     def _refresh_view(self):
         try:

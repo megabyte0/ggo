@@ -132,12 +132,16 @@ class Controller:
         node = model[treeiter][1]
         if node:
             self.current_node = node
+            if DEBUG:
+                print("[Controller] _on_tree_selection_changed: node id", id(node))
             moves = self.tree.get_node_path(node)
             self._apply_move_sequence_to_board(moves)
             GLib.idle_add(self._refresh_view)
 
     # --- TreeCanvas callback ---
     def _on_tree_node_selected(self, node):
+        if DEBUG:
+            print("[Controller] _on_tree_node_selected: node id", id(node))
         if node is None:
             return
         self.current_node = node
@@ -181,13 +185,18 @@ class Controller:
         if found is None:
             # add move in-place
             if DEBUG:
-                print("[Controller] adding move under parent:", parent)
+                print("[Controller] adding move under parent:", parent, "parent id:", id(parent))
             new_node = self.tree.add_move(parent, color, sgf_coord, props=None)
             if DEBUG:
                 # сразу после создания/получения node
                 print("[DBG add_move] Controller id: ", id(self), "TreeAdapter id:", id(self.tree), "game_tree id:",
                       id(self.tree.get_game_tree()), "root id:", id(self.tree.get_game_tree().root))
-                print("[DBG add_move] parent:", new_node.parent, "new_node:", new_node)
+                print(
+                    "[DBG add_move] parent:", new_node.parent,
+                    "(id: %s)"%(id(new_node.parent)),
+                    "new_node:", new_node,
+                    "(id: %s)"%(id(new_node))
+                )
 
             # try to apply to board model
             rc = (r,c)

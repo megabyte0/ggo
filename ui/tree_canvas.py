@@ -11,7 +11,7 @@ from typing import Optional, Tuple, Dict, Any, List, Callable
 
 
 class _DrawNode:
-    def __init__(self, node_obj, x: float, y: float, radius: float):
+    def __init__(self, node_obj: Optional[Node], x: float, y: float, radius: float):
         self.node = node_obj
         self.x = x
         self.y = y
@@ -243,6 +243,7 @@ class TreeCanvas(Gtk.DrawingArea):
             node = dn.node
             has_move = self._node_has_move(node)
             selected = (node is self.selected_node)
+            is_variation = node._is_variation
 
             if not has_move:
                 # draw diamond for nodes without move
@@ -257,7 +258,8 @@ class TreeCanvas(Gtk.DrawingArea):
                     self._draw_diamond(cr, dn.x, dn.y, dn.radius + 2.0, fill_color=fill_col, stroke_color=(0.05,0.5,0.95), stroke_width=1.5)
             else:
                 # normal circular node
-                cr.set_source_rgb(0.15, 0.15, 0.15)  # dark filled nodes
+                color = (0.15, 0.15, 0.15) if not is_variation else (0.65, 0.65, 0.65)
+                cr.set_source_rgb(*color)  # dark filled nodes
                 cr.arc(dn.x, dn.y, dn.radius, 0, 2*math.pi)
                 cr.fill()
 
@@ -270,7 +272,8 @@ class TreeCanvas(Gtk.DrawingArea):
                 else:
                     # thin neutral border
                     cr.set_line_width(1.0)
-                    cr.set_source_rgb(0.2, 0.2, 0.2)
+                    color = (0.2, 0.2, 0.2) if not is_variation else (0.7, 0.7, 0.7)
+                    cr.set_source_rgb(*color)
                     cr.arc(dn.x, dn.y, dn.radius, 0, 2*math.pi)
                     cr.stroke()
 

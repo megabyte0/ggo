@@ -12,7 +12,7 @@
 # for typical SGF files used in this project.
 import os
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any, Callable
 import re
 import sys
 
@@ -84,6 +84,9 @@ class Node:
         elif "W" in pd:
             mv = f"W {pd['W']}"
         return f"<Node move={mv} props={{{', '.join(pd.keys())}}} children={len(self.children)}>"
+
+    def set_is_variation(self, is_variation: bool) -> None:
+        self._is_variation = is_variation
 
 
 # -------------------------
@@ -590,6 +593,28 @@ class GameTree:
                 need_game_node = True
         return need_game_node
 
+    def walk(self, fn: Callable[[Node], None], node: Node):
+        fn(node)
+        while len(node.children or []) == 1:
+            node = node.children[0]
+            fn(node)
+        children = node.children or []
+        for child in children:
+            self.walk(fn, child)
+
+    def walk_root(self, fn: Callable[[Node], None]):
+        self.walk(fn, self.root)
+
+    def normalize_is_variation(self):
+        def normalize_is_variation_fn(node: Node):
+            children = node.children or []
+            is_variation = len(children) >= 2
+            for child in children:
+                # print("[GameTree] normalize_is_variation_fn id", id(children[idx]), "is_variation", is_variation)
+                child.set_is_variation(is_variation)
+
+        self.walk_root(normalize_is_variation_fn)
+
 
 # -------------------------
 # CLI test
@@ -600,7 +625,7 @@ if __name__ == "__main__":
         with open(sys.argv[1], "r", encoding="utf-8") as f:
             sample = f.read()
     else:
-        sample = "(;GM[1]FF[4]CA[UTF-8]AP[Sabaki:0.52.2]KM[6.5]SZ[19]DT[2025-12-04];B[pd](;W[dp];B[pp];W[pq];B[oq];W[dd];B[pr];W[qq];B[qr];W[jd];B[rq];W[qp];B[qo];W[rp];B[sp];W[ro];B[rn];W[so];B[sn])(;W[pp](;B[dp];W[dd])(;B[po];W[dp];B[op];W[dd];B[pq])))"
+        sample = "(;GM[1]FF[4]CA[UTF-8]AP[Sabaki:0.52.2]KM[6.5]SZ[19]DT[2025-12-09];B[pd](;W[dp];B[pp];W[dd])(;W[pp];B[dp];W[dd]))"
 
     print("Importing sample:", sample)
     gt = GameTree()

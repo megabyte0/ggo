@@ -143,10 +143,10 @@ class GameTab:
                     if not filename.lower().endswith(".sgf"):
                         filename = filename + ".sgf"
                     try:
-                        print("[DBG save] game_tab self.game_tree id:", id(getattr(self, "_gt", None)))
+                        # print("[DBG save] game_tab self.game_tree id:", id(getattr(self, "_gt", None)))
                         # если game_tab не хранит game_tree, попробуй вывести контроллер.tree
-                        print("[DBG save] controller.tree id:",
-                              id(getattr(self, "controller", None).tree) if getattr(self, "controller", None) else None)
+                        # print("[DBG save] controller.tree id:",
+                        #       id(getattr(self, "controller", None).tree) if getattr(self, "controller", None) else None)
                         # dump to_sgf and raw tree
                         game_tree = self._get_game_tree()
                         # gt = getattr(self, "_gt", None) or (
@@ -155,7 +155,6 @@ class GameTab:
                         #         self.controller, "tree", None) else None)
                         print("[DBG save] resolved gt id:", id(game_tree) if game_tree else None)
                         if game_tree:
-                            print("[DBG save] to_sgf repr:", repr(game_tree.to_sgf()))
                             root = game_tree.root
                             print("[DBG save] root id:", id(root), "children count:",
                                   len(getattr(root, "children", [])))
@@ -163,7 +162,9 @@ class GameTab:
                                 print(
                                     f"[DBG save] child {i} id={id(ch)} props={getattr(ch, 'props', None)} children={len(getattr(ch, 'children', []))}")
                         if game_tree is not None and hasattr(game_tree, "to_sgf"):
+                            game_tree.normalize_is_variation()
                             sgf_out = game_tree.to_sgf()
+                            print("[DBG save] to_sgf repr:", repr(sgf_out))
                         else:
                             sgf_out = "self._gt is None" if game_tree is None else id(game_tree)
                         with open(filename, "w", encoding="utf-8") as f:

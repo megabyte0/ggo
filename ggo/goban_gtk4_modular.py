@@ -18,6 +18,7 @@ import itertools
 import sys
 
 import gi, os, math
+from cairo import Context
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
@@ -25,7 +26,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gtk, Pango, PangoCairo
 import cairo
 from dotenv import load_dotenv
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
 DEFAULT_STYLE = {}
 # Load env
@@ -400,6 +401,19 @@ def on_draw(cr: cairo.Context, board_size: int, width: int, height: int, stones:
     layout = compute_layout(cr, board_size, width, height)
     # Call modular draws in order
     draw_panel(cr, board_size, layout, width, height)
+    draw_dashed_rectangles(cr, layout)
+
+    # grid, hoshi, stones, coords
+    draw_grid(cr, board_size, layout)
+    draw_hoshi(cr, board_size, layout)
+    draw_labels(cr, board_size, layout)
+    draw_stones(cr, board_size, layout, stones)
+    return layout
+
+
+def draw_dashed_rectangles(cr: Context, layout: dict[
+    str, tuple[float, float, float, float] | tuple[float, float, float, float, float, float, float, float] | int |
+         tuple[Any, ...]]):
     # outer labels-area border (drawn here as dashed rectangle)
     labels_left, labels_top, labels_w, labels_h = layout["labels_area"]
     draw_dashed_rectangle(cr, labels_left, labels_top, labels_w, labels_h)
@@ -409,13 +423,6 @@ def on_draw(cr: cairo.Context, board_size: int, width: int, height: int, stones:
     padding = DEFAULT_STYLE['inner_padding_fixed'] + DEFAULT_STYLE['inner_padding_relative'] * cell
     stone_left, stone_top, stone_side, _ = increase_size(layout["stone_area"], (padding,) * 2)
     draw_dashed_rectangle(cr, stone_left, stone_top, stone_side, stone_side)
-
-    # grid, hoshi, stones, coords
-    draw_grid(cr, board_size, layout)
-    draw_hoshi(cr, board_size, layout)
-    draw_labels(cr, board_size, layout)
-    draw_stones(cr, board_size, layout, stones)
-    return layout
 
 
 class Goban(Gtk.DrawingArea):

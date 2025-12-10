@@ -1,4 +1,6 @@
 # ui/board_view.py
+import math
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -7,7 +9,9 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gtk, Pango, PangoCairo, Gdk
 import cairo
 from typing import Optional, Dict, Tuple
-from ggo.goban_gtk4_modular import on_draw, DEFAULT_STYLE
+from ggo.goban_gtk4_modular import (
+    on_draw, compute_layout, draw_panel, draw_dashed_rectangles, draw_grid, draw_hoshi, draw_labels, draw_stones,
+    DEFAULT_STYLE)
 
 
 class BoardView(Gtk.Box):
@@ -30,6 +34,7 @@ class BoardView(Gtk.Box):
         self.board_state = [[None] * board_size for _ in range(board_size)]
         self.ghost = None
         self.heatmap = None
+        self._last_stone : Optional[Tuple[int, int, str]] = None
 
         # hover tracking
         self._last_hover = None
@@ -40,6 +45,7 @@ class BoardView(Gtk.Box):
             "ghost_black_alpha": 0.35,
             "ghost_white_alpha": 0.85,
             'ghost_allowed': False,
+            "last_stone_mark_radius": 0.345,
         })
         self.style = default_style if style is None else {**default_style, **style}
 
@@ -91,6 +97,10 @@ class BoardView(Gtk.Box):
         if self.ghost is not None:
             self.ghost = None
             self.darea.queue_draw()
+
+    def set_last_stone(self, coords: Optional[Tuple[int, int, str]]):
+        print("[BoardView] set_last_stone", coords)
+        self._last_stone = coords
 
     def show_heatmap(self, data: Dict[Tuple[int, int], float]):
         self.heatmap = data
@@ -150,7 +160,7 @@ class BoardView(Gtk.Box):
             if state is not None:
                 ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
         # else:
-            # print("[BoardView] ev is None")
+        # print("[BoardView] ev is None")
         print("[BoardView] click ctrl is", ctrl, "button is", button)
         if not ctrl:
             if self._click_cb:
@@ -196,7 +206,22 @@ class BoardView(Gtk.Box):
             for column_n, color in enumerate(row)
             if color is not None
         ]
-        self._layout = on_draw(cr, self.board_size, width, height, recomputed_stones)
+        board_size = self.board_size
+        stones = recomputed_stones
+        # ggo.goban_gtk4_modular.on_draw copy/paste -->
+        self._layout = layout = compute_layout(cr, board_size, width, height)
+        # Call modular draws in order
+        draw_panel(cr, board_size, layout, width, height)
+        draw_dashed_rectangles(cr, layout)
+
+        # grid, hoshi, stones, coords
+        draw_grid(cr, board_size, layout)
+        draw_hoshi(cr, board_size, layout)
+        draw_labels(cr, board_size, layout)
+        draw_stones(cr, board_size, layout, stones)
+        # <--
+        self._draw_last_stone_mark(cr)
+
         self._get_origin_and_cell_from_layout()
         self._draw_ghost(cr)
         return
@@ -221,3 +246,18 @@ class BoardView(Gtk.Box):
             cr.set_source_rgba(1, 1, 1, self.style["ghost_white_alpha"])
         cr.arc(x, y, radius, 0, 2 * 3.14159)
         cr.fill()
+
+    def _draw_last_stone_mark(self, cr: cairo.Context):
+        if self._last_stone is None:
+            return
+        grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = self._layout["grid"]
+        stone_r = cell * self.style['stone_radius_factor']
+        mark_r = stone_r * self.style['last_stone_mark_radius']
+        r, c, color = self._last_stone
+        color_rgb = self.style[['stone_black', 'stone_white'][color.lower() in ["black", "b"]]]
+        cx = x0 + c * cell
+        cy = y0 + r * cell
+        cr.set_source_rgb(*color_rgb)
+        cr.arc(cx, cy, mark_r, 0, 2.0 * math.pi)
+        cr.fill()
+

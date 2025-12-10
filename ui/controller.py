@@ -63,10 +63,6 @@ class Controller:
         self.current_node = root
         if DEBUG:
             print("[Controller] load_game_tree root children:", len(root.children) if root else None)
-        # update canvas
-        # if DEBUG:
-        #     print("[Controller] load_game_tree setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
-        self._refresh_tree_canvas()
         # apply AB/AW to board
         stones = self.tree.collect_ab_aw()
         if stones:
@@ -82,6 +78,12 @@ class Controller:
                 self.board.set_stones(numeric)
         # apply mainline to model (reset + replay)
         main_nodes = self.tree.collect_mainline_nodes()
+        if main_nodes:
+            self.current_node = main_nodes[-1]
+        # update canvas
+        # if DEBUG:
+        #     print("[Controller] load_game_tree setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
+        self._refresh_tree_canvas()
         moves = []
         for nd in main_nodes:
             # convert node -> "B pd" etc.

@@ -1,6 +1,7 @@
 # ui/controller_board.py
 from typing import Tuple, List, Optional, Any
 from ggo.goban_model import Board, IllegalMove
+from ui.board_view import BoardView
 
 DEBUG = False
 
@@ -13,7 +14,7 @@ class BoardAdapter:
       - интерфейс, ожидаемый контроллером: play_move, set_stones, reset, place_black/place_white, show ghost
     """
     def __init__(self, board_view, board_size: int = 19):
-        self.view = board_view
+        self.view : BoardView = board_view
         self.model = Board(size=board_size)
         # board_view expected API: on_click(cb), on_hover(cb), on_leave(cb), set_board(board), queue_draw()
         # If view has different API, adapt here.
@@ -24,6 +25,7 @@ class BoardAdapter:
         if DEBUG:
             print("[BoardAdapter] reset model")
         self.model = Board(size=self.size)
+        self.view.set_last_stone(None)
         if hasattr(self.view, "clear_board"):
             try:
                 self.view.clear_board()
@@ -40,6 +42,7 @@ class BoardAdapter:
         r, c = rc
         try:
             self.model.play(color, point=(r, c))
+            self.view.set_last_stone((r, c, color))
             if hasattr(self.view, "place_black") and color == "B":
                 try:
                     self.view.place_black(r, c)

@@ -615,6 +615,28 @@ class GameTree:
 
         self.walk_root(normalize_is_variation_fn)
 
+    def ascend(self, fn: Callable[[Node], Optional[bool]], node: Node):
+        while node is not None and node.parent and node.parent is not self.root:
+            _continue = fn(node)
+            if _continue is False:
+                break
+            node = node.parent
+
+    def ascend_to_move(self, node: Node, mv: str) -> Optional[Node]:
+        found_node: Optional[Node] = None
+
+        def not_has_move(node: Node):
+            nonlocal found_node
+            props_dict = node.props_dict()
+            for k in ['B', 'W', 'AB', 'AW']:
+                if k in props_dict and props_dict[k] and mv in props_dict[k]:
+                    found_node = node
+                    return False
+            return True
+
+        self.ascend(not_has_move, node)
+        return found_node
+
 
 # -------------------------
 # CLI test

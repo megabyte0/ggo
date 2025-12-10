@@ -4,7 +4,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gtk, Pango, PangoCairo
+from gi.repository import Gtk, Pango, PangoCairo, Gdk
 import cairo
 from typing import Optional, Dict, Tuple
 from ggo.goban_gtk4_modular import on_draw, DEFAULT_STYLE
@@ -64,6 +64,7 @@ class BoardView(Gtk.Box):
         self._click_cb = None
         self._hover_cb = None
         self._leave_cb = None
+        self._ctrl_click_cb = None
 
     # Public API
     def set_board(self, board_state):
@@ -72,6 +73,9 @@ class BoardView(Gtk.Box):
 
     def on_click(self, callback):
         self._click_cb = callback
+
+    def on_ctrl_click(self, callback):
+        self._ctrl_click_cb = callback
 
     def on_hover(self, callback):
         self._hover_cb = callback
@@ -134,11 +138,32 @@ class BoardView(Gtk.Box):
     def _on_pressed(self, gesture, n_press, x, y):
         pt = self._coords_to_point(x, y)
         # print(f"[BoardView] _on_pressed: n_press={n_press} x={x:.1f} y={y:.1f} -> pt={pt}")
-        if pt and self._click_cb:
-            try:
-                self._click_cb(pt[0], pt[1], 1)
-            except Exception as e:
-                print("[BoardView] click callback error:", e)
+        if pt is None:
+            return
+        ev = gesture.get_current_event()
+        ctrl = False
+        button = None
+        if ev is not None:
+            # print("[BoardView] dir(ev):", dir(ev))
+            state = ev.get_modifier_state()
+            button = ev.get_button()
+            if state is not None:
+                ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        # else:
+            # print("[BoardView] ev is None")
+        print("[BoardView] click ctrl is", ctrl, "button is", button)
+        if not ctrl:
+            if self._click_cb:
+                try:
+                    self._click_cb(pt[0], pt[1], button)
+                except Exception as e:
+                    print("[BoardView] click callback error:", e)
+        else:
+            if button == 1 and self._ctrl_click_cb:
+                try:
+                    self._ctrl_click_cb(pt[0], pt[1])
+                except Exception as e:
+                    print("[BoardView] ctrl-click callback error:", e)
 
     def _on_motion(self, controller, x, y):
         pt = self._coords_to_point(x, y)

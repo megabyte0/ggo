@@ -1,9 +1,11 @@
 # ui/main_app.py
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 
 import gi
+from gi.repository.Gtk import Box
 
-from ggo.game_tree import GameTree
+from ggo.game_tree import GameTree, Node
+from ui.analysys_box import AnalysisBox
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
@@ -18,25 +20,12 @@ from ui.controller import Controller
 class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="ggo — modular UI")
-        self.controller: Optional[Controller] = None
-        self.board_view: Optional[BoardView] = None
-        self.game_tree: Optional[GameTree] = GameTree()  # to analysis box
-        self.tree_canvas = None
-        self.game_tab: Optional[GameTab] = None
-        self.btn_last = None
-        self.btn_next = None
-        self.btn_prev = None
-        self.btn_first = None
-        self.lbl_scorelead = None
-        self.lbl_winprob = None
-        self.var_list = None
-        self.var_scroller = None
         self.set_default_size(1200, 800)
 
         # Notebook
         self.notebook = Gtk.Notebook()
 
-        analysis_box = self.build_analysis_box()
+        analysis_box = AnalysisBox(self)
 
         # Добавляем вкладки
         self.notebook.append_page(analysis_box, Gtk.Label(label="Analysis"))
@@ -49,191 +38,6 @@ class MainWindow(Gtk.ApplicationWindow):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         vbox.append(self.notebook)
         self.set_child(vbox)
-
-    def build_analysis_box(self) -> Gtk.Box:
-        def get_game_tree():
-            return self.game_tree
-
-        def set_game_tree(game_tree):
-            self.game_tree = game_tree
-
-        def get_game_tree_root():
-            return self.game_tree.root
-
-        # Создаём board_view и контроллер раньше, чтобы callback'и могли к ним обращаться
-        self.board_view = BoardView(board_size=19)
-        print("[main_app] board_view id:", id(self.board_view))
-
-        # Создаём контроллер сразу — он может понадобиться в callback'ах загрузки
-        self.controller = Controller(self.board_view, get_game_tree=get_game_tree)
-        print("[main_app] controller id:", id(self.controller))
-
-        # Теперь строим analysis_box (внутри него создаётся TreeCanvas и кнопки)
-        # основной горизонтальный анализ-бокс: слева katago, центр доска, справа графики/дерево
-        analysis_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
-        left_panel = self.build_left_panel()
-        analysis_box.append(left_panel)
-
-        # center board + top info + nav (nav только под гобаном)
-        center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-
-        top_info = self.build_top_info_labels()
-        center.append(top_info)
-
-        # board itself
-        center.append(self.board_view)
-
-        nav = self.build_nav_buttons()
-        center.append(nav)
-
-        analysis_box.append(center)
-
-        # right charts + tree
-        right_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        right_panel.set_size_request(320, -1)
-
-        # charts placeholders
-        right_panel.append(Gtk.Label(label="Winrate chart"))
-        right_panel.append(Gtk.Label(label="Score chart"))
-        right_panel.append(Gtk.Label(label="Diff chart"))
-
-        # --- Game controls (Open/Save) placed above tree ---
-        controls_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        controls_box.set_halign(Gtk.Align.CENTER)
-        # создаём GameTab (логика) и кнопки, которые вызывают его методы
-        self.game_tab = GameTab(get_game_tree=get_game_tree, set_game_tree=set_game_tree)
-
-        btn_open = Gtk.Button(label="Open SGF")
-        btn_save = Gtk.Button(label="Save SGF")
-        controls_box.append(btn_open)
-        controls_box.append(btn_save)
-        right_panel.append(controls_box)
-
-        # tree under charts: use TreeCanvas inside scrolled window
-        tree_scroller = Gtk.ScrolledWindow()
-        tree_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.tree_canvas = TreeCanvas(node_radius=3, level_vgap=24, sibling_hgap=12, get_root=get_game_tree_root)
-        tree_scroller.set_size_request(320, -1)
-        tree_scroller.set_hexpand(False)
-        tree_scroller.set_child(self.tree_canvas)
-        right_panel.append(tree_scroller)
-        analysis_box.append(right_panel)
-
-        # подключаем кнопки Open/Save к game_tab, передаём окно как parent
-        btn_open.connect("clicked", lambda w: self.game_tab.open_sgf_dialog(self))
-        btn_save.connect("clicked", lambda w: self.game_tab.save_sgf_dialog(self))
-
-        # callback: переименовать вкладку
-        def rename_tab(basename: str):
-            try:
-                self.notebook.set_tab_label_text(analysis_box, basename)
-            except Exception:
-                pass
-
-        # on_game_loaded: надёжно обновляет TreeCanvas и уведомляет контроллер
-        def on_game_loaded(gt):
-            # лог для отладки
-            print("[MainWindow] on_game_loaded called. gt:", type(gt), "root:", getattr(gt, "root", None))
-            if gt is None:
-                print("[MainWindow] GameTree is None — parser failed or not available")
-                return
-
-            root = getattr(gt, "root", None)
-            if root is None:
-                print("[MainWindow] gt.root is None — nothing to show")
-                return
-
-            # Попробуем вывести количество детей (если есть)
-            try:
-                children = getattr(root, "children", None)
-                cnt = len(children) if children is not None else 0
-                print(f"[MainWindow] root children count: {cnt}")
-            except Exception as e:
-                print("[MainWindow] error reading root.children:", e)
-
-            # Обновляем TreeCanvas
-            try:
-                # print("[MainWindow] setting tree root", id(self.tree_canvas.root), "to", id(root))
-                self.tree_canvas.set_tree_root()
-                # на всякий случай форсируем пересчёт и перерисовку
-                try:
-                    self.tree_canvas._recompute_layout()
-                except Exception:
-                    pass
-                self.tree_canvas.queue_draw()
-                print("[MainWindow] tree_canvas updated")
-            except Exception as e:
-                print("[MainWindow] failed to update tree_canvas:", e)
-
-            # Уведомляем контроллер, если у него есть метод загрузки дерева
-            try:
-                if hasattr(self.controller, "load_game_tree"):
-                    self.controller.load_game_tree()
-                    print("[MainWindow] controller.load_game_tree called")
-                    # после load_game_tree или после tree.load(gt)
-                    # print("[DBG controller] controller.tree id:", id(self.tree), "tree.game_tree id:",
-                    #       id(self.tree.game_tree) if getattr(self.tree, 'game_tree', None) else None)
-
-            except Exception as e:
-                print("[MainWindow] controller.load_game_tree failed:", e)
-
-        # регистрируем callback'и
-        self.game_tab.set_rename_tab_callback(rename_tab)
-        self.game_tab.set_on_load_callback(on_game_loaded)
-
-        # attach tree canvas to controller (контроллер будет обновлять дерево при необходимости)
-        self.controller.attach_tree_canvas(self.tree_canvas)
-
-        # подключаем кнопки навигации
-        self._wire_nav_buttons()
-
-        return analysis_box
-
-    def build_nav_buttons(self) -> Any:
-        # nav buttons under board (only for the board)
-        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        nav.set_halign(Gtk.Align.CENTER)
-        self.btn_first = Gtk.Button(label="<<")
-        self.btn_prev = Gtk.Button(label="<")
-        self.btn_next = Gtk.Button(label=">")
-        self.btn_last = Gtk.Button(label=">>")
-        nav.append(self.btn_first);
-        nav.append(self.btn_prev);
-        nav.append(self.btn_next);
-        nav.append(self.btn_last)
-        return nav
-
-    def build_top_info_labels(self) -> Any:
-        # top info: win prob / score lead
-        top_info = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        top_info.set_halign(Gtk.Align.CENTER)
-        self.lbl_winprob = Gtk.Label(label="Win: —")
-        self.lbl_scorelead = Gtk.Label(label="Score lead: —")
-        top_info.append(self.lbl_winprob)
-        top_info.append(self.lbl_scorelead)
-        return top_info
-
-    def build_left_panel(self) -> Any:
-        # left katago panel
-        left_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        left_panel.set_size_request(260, -1)
-        left_panel.append(Gtk.Label(label="KataGo panel"))
-        self.var_scroller = Gtk.ScrolledWindow()
-        self.var_list = Gtk.ListBox()
-        self.var_scroller.set_child(self.var_list)
-        left_panel.append(self.var_scroller)
-        return left_panel
-
-    def _wire_nav_buttons(self):
-        # кнопки уже созданы в get_analysis_box и сохранены в self
-        self.btn_first.connect("clicked", lambda w: self.controller.go_first())
-        self.btn_prev.connect("clicked", lambda w: self.controller.go_prev())
-        self.btn_next.connect("clicked", lambda w: self.controller.go_next())
-        self.btn_last.connect("clicked", lambda w: self.controller.go_last())
-
-        # также даём контроллеру ссылки на метки сверху, чтобы он мог обновлять их
-        self.controller.set_top_info_widgets(self.lbl_winprob, self.lbl_scorelead)
 
 
 class App(Gtk.Application):

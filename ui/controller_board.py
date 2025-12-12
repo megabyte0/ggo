@@ -43,6 +43,7 @@ class BoardAdapter:
         try:
             self.model.play(color, point=(r, c))
             self.view.set_last_stone((r, c, color))
+            self.view.clear_ghost()
             if hasattr(self.view, "place_black") and color == "B":
                 try:
                     self.view.place_black(r, c)

@@ -256,7 +256,7 @@ class TreeCanvas(Gtk.DrawingArea):
             if not has_move:
                 # draw diamond for nodes without move
                 fill_col = (0.98, 0.98, 0.98)
-                stroke_col = (0.2, 0.2, 0.2)
+                stroke_col = (0.2, 0.2, 0.2) if not node.is_current else (0.2, 0.2, 0.8)
                 if selected:
                     fill_col = (0.9, 0.95, 1.0)
                 self._draw_diamond(cr, dn.x, dn.y, dn.radius, fill_color=fill_col, stroke_color=stroke_col,

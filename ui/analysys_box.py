@@ -115,6 +115,8 @@ class AnalysisBox(Gtk.Box):
             try:
                 # print("[MainWindow] setting tree root", id(self.tree_canvas.root), "to", id(root))
                 self.tree_canvas.set_tree_root()
+                for root_child in self.game_tree.root.children:
+                    self.game_tree.set_current(root_child)
                 # на всякий случай форсируем пересчёт и перерисовку
                 try:
                     self.tree_canvas._recompute_layout()

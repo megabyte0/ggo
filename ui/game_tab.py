@@ -88,7 +88,8 @@ class GameTab:
                         elif hasattr(self._get_game_tree(), "load_sgf"):
                             # should never happen
                             self._get_game_tree().load_sgf(text)
-                    except Exception:
+                    except Exception as e:
+                        print("[GameTab] open_sgf_dialog on_response", e)
                         self._set_game_tree(None)  ## !
 
                     self._loaded_filepath = filename

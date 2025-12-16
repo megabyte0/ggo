@@ -616,7 +616,7 @@ class GameTree:
         self.walk_root(normalize_is_variation_fn)
 
     def ascend(self, fn: Callable[[Node], Optional[bool]], node: Node):
-        while node is not None and node.parent and node.parent is not self.root:
+        while node is not None and node.parent:
             _continue = fn(node)
             if _continue is False:
                 break
@@ -664,6 +664,9 @@ class GameTree:
         def ascend_fn(node: Node) -> bool:
             nonlocal node_to_reset_current
             if node.parent is None:
+                return False
+            if node.parent.parent is None:
+                node.is_current = True
                 return False
             current_child = get_current_child(node.parent)
             node.is_current = True

@@ -1,5 +1,5 @@
 [project]
 name = "ggo"
-version = "0.0.13"
+version = "0.0.15"
 authors = [{name="You"}]
 dependencies = []

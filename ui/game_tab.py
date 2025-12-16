@@ -18,12 +18,11 @@ class GameTab:
     Хранит self._gt (GameTree) и self._loaded_filepath.
     """
 
-    def __init__(self, get_game_tree: Callable[[], GameTree], set_game_tree: Callable[[GameTree], None]):
+    def __init__(self, get_game_tree: Callable[[], GameTree]):
         self._loaded_filepath: Optional[str] = None
         self._rename_tab_callback: Optional[Callable[[str], None]] = None
         self._on_load_callback: Optional[Callable[[object], None]] = None
         self._get_game_tree = get_game_tree
-        self._set_game_tree = set_game_tree
 
     def set_rename_tab_callback(self, callback: Callable[[str], None]):
         self._rename_tab_callback = callback
@@ -82,15 +81,10 @@ class GameTab:
                         return
 
                     try:
-                        self._set_game_tree(GameTree())
-                        if hasattr(self._get_game_tree(), "load_sgf_simple"):
-                            self._get_game_tree().load_sgf_simple(text)
-                        elif hasattr(self._get_game_tree(), "load_sgf"):
-                            # should never happen
-                            self._get_game_tree().load_sgf(text)
+                        self._get_game_tree().clear()
+                        self._get_game_tree().load_sgf_simple(text)
                     except Exception as e:
                         print("[GameTab] open_sgf_dialog on_response", e)
-                        self._set_game_tree(None)  ## !
 
                     self._loaded_filepath = filename
 

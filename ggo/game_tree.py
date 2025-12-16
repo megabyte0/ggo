@@ -694,6 +694,8 @@ class GameTree:
             self.descend(descend_reset_current_fn, node_to_reset_current)
         self.descend(descend_set_mainline_current_fn, node)
 
+    def clear(self):
+        self.root = Node(parent=None)
 
 # -------------------------
 # CLI test

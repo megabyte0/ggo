@@ -16,7 +16,6 @@ class AnalysisBox(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.controller: Optional[Controller] = None
         self.board_view: Optional[BoardView] = None
-        self.game_tree: Optional[GameTree] = GameTree()  # to analysis box
         self.tree_canvas: Optional[TreeCanvas] = None
         self.game_tab: Optional[GameTab] = None
         self.btn_last: Optional[Gtk.Button] = None
@@ -32,20 +31,17 @@ class AnalysisBox(Gtk.Box):
 
     def build_analysis_box(self) -> Gtk.Box:
         def get_game_tree():
-            return self.game_tree
-
-        def set_game_tree(game_tree):
-            self.game_tree = game_tree
+            return self.controller.get_game_tree()
 
         def get_game_tree_root():
-            return self.game_tree.root
+            return self.controller.get_game_tree().root
 
         # Создаём board_view и контроллер раньше, чтобы callback'и могли к ним обращаться
         self.board_view = BoardView(board_size=19)
         print("[main_app] board_view id:", id(self.board_view))
 
         # Создаём контроллер сразу — он может понадобиться в callback'ах загрузки
-        self.controller = Controller(self.board_view, get_game_tree=get_game_tree)
+        self.controller = Controller(self.board_view)
         print("[main_app] controller id:", id(self.controller))
 
         # Теперь строим analysis_box (внутри него создаётся TreeCanvas и кнопки)
@@ -69,7 +65,7 @@ class AnalysisBox(Gtk.Box):
 
         analysis_box.append(center)
 
-        right_panel = self.build_right_panel(get_game_tree, set_game_tree, get_game_tree_root)
+        right_panel = self.build_right_panel(get_game_tree, get_game_tree_root)
         analysis_box.append(right_panel)
 
         self._wire_game_tab_callbacks(analysis_box)
@@ -115,8 +111,9 @@ class AnalysisBox(Gtk.Box):
             try:
                 # print("[MainWindow] setting tree root", id(self.tree_canvas.root), "to", id(root))
                 self.tree_canvas.set_tree_root()
-                for root_child in self.game_tree.root.children:
-                    self.game_tree.set_current(root_child)
+                game_tree = self.controller.get_game_tree()
+                for root_child in game_tree.root.children:
+                    game_tree.set_current(root_child)
                 # на всякий случай форсируем пересчёт и перерисовку
                 try:
                     self.tree_canvas._recompute_layout()
@@ -143,7 +140,7 @@ class AnalysisBox(Gtk.Box):
         self.game_tab.set_rename_tab_callback(rename_tab)
         self.game_tab.set_on_load_callback(on_game_loaded)
 
-    def build_right_panel(self, get_game_tree: Callable[[], GameTree | None], set_game_tree: Callable[[GameTree], None],
+    def build_right_panel(self, get_game_tree: Callable[[], GameTree | None],
                           get_game_tree_root: Callable[[], Node]) -> Gtk.Box:
         # right charts + tree
         right_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -158,7 +155,7 @@ class AnalysisBox(Gtk.Box):
         controls_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         controls_box.set_halign(Gtk.Align.CENTER)
         # создаём GameTab (логика) и кнопки, которые вызывают его методы
-        self.game_tab = GameTab(get_game_tree=get_game_tree, set_game_tree=set_game_tree)
+        self.game_tab = GameTab(get_game_tree=get_game_tree)
 
         btn_open = Gtk.Button(label="Open SGF")
         btn_save = Gtk.Button(label="Save SGF")

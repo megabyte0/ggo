@@ -6,6 +6,7 @@ from ggo.game_tree import GameTree, Node
 from ui.board_view import BoardView
 from ui.controller_board import BoardAdapter, DEBUG as BOARD_DEBUG
 from ui.controller_tree import TreeAdapter, DEBUG as TREE_DEBUG
+from ui.tree_canvas import TreeCanvas
 
 # enable debug here
 DEBUG = True
@@ -19,14 +20,15 @@ class Controller:
     а также TreeCanvas/TreeStore/BoardView.
     """
 
-    def __init__(self, board_view: BoardView, board_size=19, get_game_tree: Callable[[], GameTree] = lambda: None):
+    def __init__(self, board_view: BoardView, board_size=19):
+        self.game_tree = GameTree()
+        self.get_game_tree = lambda: self.game_tree
         self.board = BoardAdapter(board_view, board_size=board_size)
-        self.tree = TreeAdapter(get_game_tree=get_game_tree)
-        self.tree_canvas = None
+        self.tree = TreeAdapter(get_game_tree=self.get_game_tree)
+        self.tree_canvas: Optional[TreeCanvas] = None
         self.tree_store = None
         self.tree_view = None
-        self.current_node = None
-        self.get_game_tree = get_game_tree
+        self.current_node: Optional[Node] = None
         # wire board view callbacks if available
         try:
             board_view.on_click(self._on_click)
@@ -37,7 +39,7 @@ class Controller:
             print("[Controller] failed to wire board view callbacks", e)
 
     # --- integration points ---
-    def attach_tree_canvas(self, tree_canvas):
+    def attach_tree_canvas(self, tree_canvas: TreeCanvas):
         self.tree_canvas = tree_canvas
         try:
             self.tree_canvas.set_on_node_selected(self._on_tree_node_selected)

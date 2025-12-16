@@ -17,6 +17,7 @@ class _DrawNode:
         self.y = y
         self.radius = radius
 
+
 class TreeCanvas(Gtk.DrawingArea):
     def __init__(
             self,
@@ -41,7 +42,7 @@ class TreeCanvas(Gtk.DrawingArea):
 
         # computed layout: list of _DrawNode and edges (parent_idx, child_idx)
         self._draw_nodes: List[_DrawNode] = []
-        self._edges: List[Tuple[int,int,bool]] = []
+        self._edges: List[Tuple[int, int]] = []
 
         # selection: selected_node highlighted by outline
         self.selected_node = None
@@ -75,6 +76,7 @@ class TreeCanvas(Gtk.DrawingArea):
 
     def select_node(self, node_obj):
         self.selected_node = node_obj
+        # self.get_game_tree().set_current(self.current_node)
         self.queue_draw()
 
     def get_selected(self):
@@ -82,6 +84,7 @@ class TreeCanvas(Gtk.DrawingArea):
 
     # Layout algorithm: include root as a real node at top
     def _recompute_layout(self):
+        print("[TreeCanvas] _recompute_layout")
         self._draw_nodes = []
         self._edges = []
         self._hit_map = {}
@@ -93,7 +96,7 @@ class TreeCanvas(Gtk.DrawingArea):
                 levels.append([])
             levels[depth].append(node)
             for child in getattr(node, 'children', []):
-                build_levels(child, depth+1, levels)
+                build_levels(child, depth + 1, levels)
 
         levels: List[List[Any]] = []
         # start from root so root becomes level 0
@@ -102,7 +105,7 @@ class TreeCanvas(Gtk.DrawingArea):
         # compute widths per level
         level_widths = []
         for lvl in levels:
-            w = len(lvl) * (2*self.node_radius) + max(0, (len(lvl)-1))*self.sibling_hgap
+            w = len(lvl) * (2 * self.node_radius) + max(0, (len(lvl) - 1)) * self.sibling_hgap
             level_widths.append(w)
 
         canvas_w = max(level_widths) if level_widths else 0
@@ -118,7 +121,7 @@ class TreeCanvas(Gtk.DrawingArea):
                 cx = x + self.node_radius
                 cy = y0 + depth * self.level_vgap
                 node_positions[node] = (cx, cy)
-                x += 2*self.node_radius + self.sibling_hgap
+                x += 2 * self.node_radius + self.sibling_hgap
 
         self.pixels_height = y0 + len(levels) * self.level_vgap + self.node_radius
         self.set_size_request(-1, self.pixels_height)
@@ -127,23 +130,26 @@ class TreeCanvas(Gtk.DrawingArea):
         index_map = {}
         self._draw_nodes = []
         idx = 0
+
         def add_nodes_recursive(node: Node):
             nonlocal idx
             if node not in node_positions:
                 for ch in getattr(node, 'children', []):
                     add_nodes_recursive(ch)
                 return
-            x,y = node_positions[node]
+            x, y = node_positions[node]
             dn = _DrawNode(node, x, y, self.node_radius)
             index_map[node] = idx
             self._draw_nodes.append(dn)
             idx += 1
             for ch in getattr(node, 'children', []):
                 add_nodes_recursive(ch)
+
         add_nodes_recursive(self._get_root())
 
         # build edges using index_map
         self._edges = []
+
         def add_edges(node: Node):
             if node not in index_map:
                 for ch in getattr(node, 'children', []):
@@ -153,8 +159,9 @@ class TreeCanvas(Gtk.DrawingArea):
             for ch in getattr(node, 'children', []):
                 if ch in index_map:
                     cidx = index_map[ch]
-                    self._edges.append((pidx, cidx, False))
+                    self._edges.append((pidx, cidx))
                 add_edges(ch)
+
         add_edges(self._get_root())
 
         # store hit map
@@ -193,7 +200,7 @@ class TreeCanvas(Gtk.DrawingArea):
 
     # helper: draw diamond at given _DrawNode
     def _draw_diamond(self, cr: cairo.Context, cx: float, cy: float, size: float,
-                      fill_color=(1.0, 1.0, 1.0), stroke_color=(0.2,0.2,0.2), stroke_width=1.0):
+                      fill_color=(1.0, 1.0, 1.0), stroke_color=(0.2, 0.2, 0.2), stroke_width=1.0):
         cr.save()
         cr.translate(cx, cy)
         cr.rotate(math.pi / 4.0)
@@ -213,11 +220,11 @@ class TreeCanvas(Gtk.DrawingArea):
     # Drawing
     def _on_draw(self, area, cr: cairo.Context, width: int, height: int, user_data):
         # background
-        cr.set_source_rgb(1,1,1)
+        cr.set_source_rgb(1, 1, 1)
         cr.paint()
 
         if not self._draw_nodes:
-            cr.set_source_rgb(0.6,0.6,0.6)
+            cr.set_source_rgb(0.6, 0.6, 0.6)
             cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
             cr.set_font_size(12)
             cr.move_to(10, 20)
@@ -226,13 +233,14 @@ class TreeCanvas(Gtk.DrawingArea):
 
         # draw edges (simple gray lines)
         cr.set_line_width(1.0)
-        cr.set_source_rgb(0.75, 0.75, 0.75)
-        for pidx, cidx, is_current in self._edges:
+        for pidx, cidx in self._edges:
             # guard indices
             if not (0 <= pidx < len(self._draw_nodes) and 0 <= cidx < len(self._draw_nodes)):
                 continue
             p = self._draw_nodes[pidx]
             c = self._draw_nodes[cidx]
+            color = (0.45, 0.45, 0.45) if p.node.is_current and c.node.is_current else (0.75, 0.75, 0.75)
+            cr.set_source_rgb(*color)
             cr.move_to(p.x, p.y + p.radius)
             cr.line_to(c.x, c.y - c.radius)
             cr.stroke()
@@ -251,30 +259,33 @@ class TreeCanvas(Gtk.DrawingArea):
                 stroke_col = (0.2, 0.2, 0.2)
                 if selected:
                     fill_col = (0.9, 0.95, 1.0)
-                self._draw_diamond(cr, dn.x, dn.y, dn.radius, fill_color=fill_col, stroke_color=stroke_col, stroke_width=1.0)
+                self._draw_diamond(cr, dn.x, dn.y, dn.radius, fill_color=fill_col, stroke_color=stroke_col,
+                                   stroke_width=1.0)
                 if selected:
                     cr.set_line_width(1.5)
                     cr.set_source_rgb(0.05, 0.5, 0.95)
-                    self._draw_diamond(cr, dn.x, dn.y, dn.radius + 2.0, fill_color=fill_col, stroke_color=(0.05,0.5,0.95), stroke_width=1.5)
+                    self._draw_diamond(cr, dn.x, dn.y, dn.radius + 2.0, fill_color=fill_col,
+                                       stroke_color=(0.05, 0.5, 0.95), stroke_width=1.5)
             else:
                 # normal circular node
                 color = (0.15, 0.15, 0.15) if not is_variation else (0.65, 0.65, 0.65)
+                color = (0.15, 0.15, 0.85) if node.is_current else color
                 cr.set_source_rgb(*color)  # dark filled nodes
-                cr.arc(dn.x, dn.y, dn.radius, 0, 2*math.pi)
+                cr.arc(dn.x, dn.y, dn.radius, 0, 2 * math.pi)
                 cr.fill()
 
                 # outline: if selected node -> draw thicker outline (highlight)
                 if selected:
                     cr.set_line_width(1.5)
                     cr.set_source_rgb(0.05, 0.5, 0.95)  # highlight outline color (blue)
-                    cr.arc(dn.x, dn.y, dn.radius + 2.0, 0, 2*math.pi)
+                    cr.arc(dn.x, dn.y, dn.radius + 2.0, 0, 2 * math.pi)
                     cr.stroke()
                 else:
                     # thin neutral border
                     cr.set_line_width(1.0)
                     color = (0.2, 0.2, 0.2) if not is_variation else (0.7, 0.7, 0.7)
                     cr.set_source_rgb(*color)
-                    cr.arc(dn.x, dn.y, dn.radius, 0, 2*math.pi)
+                    cr.arc(dn.x, dn.y, dn.radius, 0, 2 * math.pi)
                     cr.stroke()
 
     # Hit testing
@@ -283,7 +294,7 @@ class TreeCanvas(Gtk.DrawingArea):
         for dn in self._draw_nodes:
             dx = x - dn.x
             dy = y - dn.y
-            if dx*dx + dy*dy <= (dn.radius + 2.0)**2:
+            if dx * dx + dy * dy <= (dn.radius + 2.0) ** 2:
                 return dn.node
         return None
 

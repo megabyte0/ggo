@@ -2,7 +2,6 @@
 from typing import Any, Optional, Callable
 
 import gi
-from gi.repository.Gtk import Box
 
 from ggo.game_tree import GameTree, Node
 from ui.analysys_box import AnalysisBox

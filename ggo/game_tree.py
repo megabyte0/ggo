@@ -637,6 +637,60 @@ class GameTree:
         self.ascend(not_has_move, node)
         return found_node
 
+    def descend(self, fn: Callable[[Node], Optional[Node]], node: Node):
+        while True:
+            child = fn(node)
+            if child not in node.children:
+                return
+            node = child
+
+    def set_current(self, node: Node):
+        if node.is_current:
+            return
+        node_to_reset_current: Optional[Node] = None
+
+        def get_current_child(node: Node) -> Node | None:
+            current_children = [
+                child
+                for child in node.children
+                if child.is_current
+            ]
+            assert len(current_children) <= 1, current_children
+            if not current_children:
+                return None
+            else:
+                return current_children[0]
+
+        def ascend_fn(node: Node) -> bool:
+            nonlocal node_to_reset_current
+            if node.parent is None:
+                return False
+            current_child = get_current_child(node.parent)
+            node.is_current = True
+            if current_child is None:
+                return True
+            if not (current_child is node):
+                node_to_reset_current = current_child
+            return False
+
+        self.ascend(ascend_fn, node)
+        def descend_reset_current_fn(node: Node):
+            node.is_current = False
+            return get_current_child(node)
+
+        def descend_set_mainline_current_fn(node: Node) -> Node | None:
+            node.is_current = True
+            current_child = get_current_child(node)
+            if current_child is not None:
+                return current_child
+            if node.children:
+                return node.children[0]
+            return None
+
+        if node_to_reset_current:
+            self.descend(descend_reset_current_fn, node_to_reset_current)
+        self.descend(descend_set_mainline_current_fn, node)
+
 
 # -------------------------
 # CLI test

@@ -140,10 +140,12 @@ class Controller:
         if treeiter is None:
             return
         node = model[treeiter][1]
-        if node:
-            if DEBUG:
-                print("[Controller] _on_tree_selection_changed: node id", id(node))
-            self._set_current_node(node, select_in_tree_canvas=False)
+        if not node:
+            return
+        if DEBUG:
+            print("[Controller] _on_tree_selection_changed: node id", id(node))
+        self._set_current_node(node, select_in_tree_canvas=False)
+        self.get_game_tree().set_current(node)
 
     # --- TreeCanvas callback ---
     def _on_tree_node_selected(self, node):
@@ -152,6 +154,7 @@ class Controller:
         if node is None:
             return
         self._set_current_node(node, select_in_tree_canvas=True)
+        self.get_game_tree().set_current(node)
 
     def _set_current_node(self, node: Node, select_in_tree_canvas: bool = True) -> None:
         self.current_node = node
@@ -224,6 +227,7 @@ class Controller:
                 return
             # advance current node
             self.current_node = new_node
+            self.get_game_tree().set_current(self.current_node)
             # update tree canvas and store
             # if DEBUG:
             #     print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
@@ -235,6 +239,7 @@ class Controller:
         else:
             # navigate into existing child
             self.current_node = found
+            self.get_game_tree().set_current(self.current_node)
             moves = self.tree.get_node_path(found)
             self._apply_move_sequence_to_board(moves)
             # if DEBUG:

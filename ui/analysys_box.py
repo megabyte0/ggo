@@ -11,6 +11,7 @@ from ui.tree_canvas import TreeCanvas
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
 
+
 class AnalysisBox(Gtk.Box):
     def __init__(self, main_window: Gtk.ApplicationWindow):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -24,8 +25,8 @@ class AnalysisBox(Gtk.Box):
         self.btn_first: Optional[Gtk.Button] = None
         self.lbl_scorelead: Optional[Gtk.Label] = None
         self.lbl_winprob: Optional[Gtk.Label] = None
-        self.var_list:Optional[Gtk.ListBox] = None
-        self.var_scroller:Optional[Gtk.ScrolledWindow] = None
+        self.var_list: Optional[Gtk.ListBox] = None
+        self.var_scroller: Optional[Gtk.ScrolledWindow] = None
         self.main_window = main_window
         self.build_analysis_box()
 
@@ -82,7 +83,7 @@ class AnalysisBox(Gtk.Box):
         # callback: переименовать вкладку
         def rename_tab(basename: str):
             try:
-                self.notebook.set_tab_label_text(analysis_box, basename)
+                self.notebook.set_tab_label_text(analysis_box, basename)  # ! .notebook does not exist
             except Exception:
                 pass
 
@@ -113,7 +114,7 @@ class AnalysisBox(Gtk.Box):
                 self.tree_canvas.set_tree_root()
                 game_tree = self.controller.get_game_tree()
                 for root_child in game_tree.root.children:
-                    game_tree.set_current(root_child)
+                    game_tree._sync_is_current(root_child)
                 # на всякий случай форсируем пересчёт и перерисовку
                 try:
                     self.tree_canvas._recompute_layout()

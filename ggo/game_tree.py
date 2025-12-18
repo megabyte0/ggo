@@ -102,6 +102,8 @@ class GameTree:
 
     def __init__(self):
         self.root: Node = Node(parent=None)
+        self._current = None
+        self._subs = []
 
     # -------------------------
     # Parsing
@@ -210,6 +212,7 @@ class GameTree:
                 i += 1
 
         # parsing finished
+        self._emit("tree_changed", None)
         return
 
     # -------------------------
@@ -310,6 +313,7 @@ class GameTree:
                 pass
 
         parent.children.append(node)
+        self._emit("tree_changed", None)
         return node
 
     def add_variation(self, parent: Node, color: str, coord: str) -> Node:
@@ -393,6 +397,9 @@ class GameTree:
             parts.append("(" + self._serialize_subtree(ch) + ")")
         return "".join(parts)
 
+    #
+    # Missing game props
+    #
     def add_missing_game_props(self):
         # --- normalization: ensure at least one game node under synthetic root ---
         if self.root is None:
@@ -593,6 +600,9 @@ class GameTree:
                 need_game_node = True
         return need_game_node
 
+    #
+    # Normalization, accend, decend
+    #
     def walk(self, fn: Callable[[Node], None], node: Node):
         fn(node)
         while len(node.children or []) == 1:
@@ -644,22 +654,22 @@ class GameTree:
                 return
             node = child
 
-    def set_current(self, node: Node):
+    def get_current_child(self, node: Node) -> Node | None:
+        current_children = [
+            child
+            for child in node.children
+            if child.is_current
+        ]
+        assert len(current_children) <= 1, current_children
+        if not current_children:
+            return None
+        else:
+            return current_children[0]
+
+    def _sync_is_current(self, node: Node):
         if node.is_current:
             return
         node_to_reset_current: Optional[Node] = None
-
-        def get_current_child(node: Node) -> Node | None:
-            current_children = [
-                child
-                for child in node.children
-                if child.is_current
-            ]
-            assert len(current_children) <= 1, current_children
-            if not current_children:
-                return None
-            else:
-                return current_children[0]
 
         def ascend_fn(node: Node) -> bool:
             nonlocal node_to_reset_current
@@ -668,7 +678,7 @@ class GameTree:
             if node.parent.parent is None:
                 node.is_current = True
                 return False
-            current_child = get_current_child(node.parent)
+            current_child = self.get_current_child(node.parent)
             node.is_current = True
             if current_child is None:
                 return True
@@ -677,13 +687,14 @@ class GameTree:
             return False
 
         self.ascend(ascend_fn, node)
+
         def descend_reset_current_fn(node: Node):
             node.is_current = False
-            return get_current_child(node)
+            return self.get_current_child(node)
 
         def descend_set_mainline_current_fn(node: Node) -> Node | None:
             node.is_current = True
-            current_child = get_current_child(node)
+            current_child = self.get_current_child(node)
             if current_child is not None:
                 return current_child
             if node.children:
@@ -696,6 +707,116 @@ class GameTree:
 
     def clear(self):
         self.root = Node(parent=None)
+
+    #
+    # Setting current, subscribe, unsubscribe
+    #
+    @property
+    def current(self):
+        return self._current
+
+    @current.setter
+    def current(self, node):
+        if node is self._current:
+            return
+        old = self._current
+        self._current = node
+        self._sync_is_current(node)
+        self._emit("current_changed", node)
+
+    def subscribe(self, cb):
+        """cb(event_name: str, payload)"""
+        if cb not in self._subs:
+            self._subs.append(cb)
+
+    def unsubscribe(self, cb):
+        try:
+            self._subs.remove(cb)
+        except ValueError:
+            pass
+
+    def _emit(self, event, payload):
+        for cb in list(self._subs):
+            try:
+                cb(event, payload)
+            except Exception as e:
+                print("[GameTree]", event, "_emit exception for", "%r(%r): %s" % (cb, payload, e))
+
+    #
+    # Getting first, last, prev, next
+    #
+    def get_first(self):
+        first = None
+
+        def ascend_to_root_child_fn(node: Node):
+            nonlocal first
+            first = node
+            if node.parent is None or node.parent.parent is None:
+                return False
+            return True
+
+        if self._current is not None:
+            self.ascend(ascend_to_root_child_fn, self._current)
+            return first
+        else:
+            return self.root
+
+    def get_last(self):
+        last = None
+
+        def descend_to_current_leaf_fn(node: Node):
+            nonlocal last
+            if not node.is_current:
+                return None
+            current_child = self.get_current_child(node)
+            if current_child:
+                last = current_child
+            return current_child
+
+        if self._current is not None:
+            self.descend(descend_to_current_leaf_fn, self._current)
+            return last
+        else:
+            return self.root
+
+    #
+    # Moving last, first, next, prev
+    #
+    def move_first(self):
+        first = self.get_first()
+        if first and first is not self._current:
+            self._current = first
+            self._emit("current_changed", first)
+
+    def move_last(self):
+        last = self.get_last()
+        if last and last is not self._current:
+            self._current = last
+            self._emit("current_changed", last)
+
+    def move_next(self):
+        if not self._current or not self._current.is_current:
+            _next = self.root
+        else:
+            _next = self.get_current_child(self._current)
+        if _next and _next is not self._current:
+            self._current = _next
+            self._emit("current_changed", _next)
+
+    def move_prev(self):
+        if not self._current or not self._current.is_current:
+            prev = self.root
+        else:
+            if self._current.parent:
+                prev = self._current.parent
+                if prev is self.root:
+                    prev.is_current = True
+            else:
+                prev = self._current
+        if prev and prev is not self._current:
+            self._current = prev
+            self._emit("current_changed", prev)
+
 
 # -------------------------
 # CLI test

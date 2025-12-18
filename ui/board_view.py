@@ -99,7 +99,7 @@ class BoardView(Gtk.Box):
             self.darea.queue_draw()
 
     def set_last_stone(self, coords: Optional[Tuple[int, int, str]]):
-        print("[BoardView] set_last_stone", coords)
+        # print("[BoardView] set_last_stone", coords)
         self._last_stone = coords
 
     def show_heatmap(self, data: Dict[Tuple[int, int], float]):

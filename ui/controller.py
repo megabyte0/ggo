@@ -23,8 +23,8 @@ class Controller:
     def __init__(self, board_view: BoardView, board_size=19):
         self.game_tree = GameTree()
         self.get_game_tree = lambda: self.game_tree
-        self.board = BoardAdapter(board_view, board_size=board_size)
-        self.tree = TreeAdapter(get_game_tree=self.get_game_tree)
+        self.board: BoardAdapter = BoardAdapter(board_view, board_size=board_size)
+        self.tree: TreeAdapter = TreeAdapter(get_game_tree=self.get_game_tree)
         self.tree_canvas: Optional[TreeCanvas] = None
         self.tree_store = None
         self.tree_view = None
@@ -37,6 +37,14 @@ class Controller:
             board_view.on_ctrl_click(self._on_ctrl_click)
         except Exception as e:
             print("[Controller] failed to wire board view callbacks", e)
+        self.game_tree.subscribe(self._on_game_tree_event)
+
+    @property
+    def current_node(self):
+        return self.game_tree.current
+    @current_node.setter
+    def current_node(self, node):
+        self.game_tree.current = node
 
     # --- integration points ---
     def attach_tree_canvas(self, tree_canvas: TreeCanvas):
@@ -147,7 +155,7 @@ class Controller:
         if DEBUG:
             print("[Controller] _on_tree_selection_changed: node id", id(node))
         self._set_current_node(node, select_in_tree_canvas=False)
-        self.get_game_tree().set_current(node)
+        # self.get_game_tree()._sync_is_current(node)
 
     # --- TreeCanvas callback ---
     def _on_tree_node_selected(self, node):
@@ -156,7 +164,7 @@ class Controller:
         if node is None:
             return
         self._set_current_node(node, select_in_tree_canvas=True)
-        self.get_game_tree().set_current(node)
+        # self.get_game_tree()._sync_is_current(node)
 
     def _set_current_node(self, node: Node, select_in_tree_canvas: bool = True) -> None:
         self.current_node = node
@@ -229,7 +237,7 @@ class Controller:
                 return
             # advance current node
             self.current_node = new_node
-            self.get_game_tree().set_current(self.current_node)
+            # self.get_game_tree()._sync_is_current(self.current_node)
             # update tree canvas and store
             # if DEBUG:
             #     print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
@@ -241,7 +249,7 @@ class Controller:
         else:
             # navigate into existing child
             self.current_node = found
-            self.get_game_tree().set_current(self.current_node)
+            # self.get_game_tree()._sync_is_current(self.current_node)
             moves = self.tree.get_node_path(found)
             self._apply_move_sequence_to_board(moves)
             # if DEBUG:
@@ -400,3 +408,61 @@ class Controller:
         if found_node is None:
             return
         self._set_current_node(found_node, select_in_tree_canvas=True)
+
+    def _on_game_tree_event(self, event, payload):
+        """Handle events from GameTree."""
+        print("[Controller] on_game_tree_event:", event, payload)
+        if event == "current_changed":
+            node = payload
+            # update board by applying moves from root to node
+            try:
+                path = self.tree.get_node_path(node) if getattr(self, "tree", None) else None
+                if path:
+                    self._apply_move_sequence_to_board(path)
+            except Exception:
+                pass
+            # update tree canvas highlight
+            if getattr(self, "tree_canvas", None):
+                try:
+                    self.tree_canvas.select_node(node)
+                    # self.tree_canvas.queue_draw()
+                except Exception:
+                    pass
+        elif event == "tree_loaded":
+            root = payload
+            if getattr(self, "tree_canvas", None):
+                try:
+                    self.tree_canvas.set_tree_root(root)
+                except Exception:
+                    pass
+            try:
+                self.game_tree.move_first()
+            except Exception:
+                pass
+        elif event == "tree_changed":
+            self.tree_canvas._recompute_layout()
+
+    # navigation callbacks (buttons / keyboard call these)
+    def go_prev(self):
+        try:
+            self.game_tree.move_prev()
+        except Exception:
+            pass
+
+    def go_next(self):
+        try:
+            self.game_tree.move_next()
+        except Exception:
+            pass
+
+    def go_first(self):
+        try:
+            self.game_tree.move_first()
+        except Exception:
+            pass
+
+    def go_last(self):
+        try:
+            self.game_tree.move_last()
+        except Exception:
+            pass

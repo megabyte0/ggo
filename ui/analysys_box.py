@@ -5,6 +5,7 @@ import gi
 from ggo.game_tree import GameTree, Node
 from ui.board_view import BoardView
 from ui.controller import Controller
+from ui.controller_katago import KatagoController
 from ui.game_tab import GameTab
 from ui.tree_canvas import TreeCanvas
 
@@ -28,6 +29,10 @@ class AnalysisBox(Gtk.Box):
         self.var_list: Optional[Gtk.ListBox] = None
         self.var_scroller: Optional[Gtk.ScrolledWindow] = None
         self.main_window = main_window
+        self.btn_katago_start: Optional[Gtk.Button] = None
+        self.btn_katago_stop: Optional[Gtk.Button] = None
+        self.log_view: Optional[Gtk.TextView] = None
+        self.log_buffer: Optional[Gtk.TextBuffer] = None
         self.build_analysis_box()
 
     def build_analysis_box(self) -> Gtk.Box:
@@ -199,15 +204,94 @@ class AnalysisBox(Gtk.Box):
         return top_info
 
     def build_left_panel(self) -> Gtk.Box:
-        # left katago panel
         left_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         left_panel.set_size_request(260, -1)
+
         left_panel.append(Gtk.Label(label="KataGo panel"))
-        self.var_scroller = Gtk.ScrolledWindow()
-        self.var_list = Gtk.ListBox()
-        self.var_scroller.set_child(self.var_list)
-        left_panel.append(self.var_scroller)
+
+        # Start / Stop buttons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.btn_katago_start = Gtk.Button(label="Start")
+        self.btn_katago_stop = Gtk.Button(label="Stop")
+        btn_box.append(self.btn_katago_start)
+        btn_box.append(self.btn_katago_stop)
+        left_panel.append(btn_box)
+
+        # Log area
+        self.log_view = Gtk.TextView()
+        self.log_view.set_editable(False)
+        self.log_view.set_wrap_mode(Gtk.WrapMode.NONE)
+        self.log_buffer = self.log_view.get_buffer()
+        log_scroller = Gtk.ScrolledWindow()
+        log_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        log_scroller.set_vexpand(True)
+        # log_scroller.set_min_content_height(200)
+        log_scroller.set_child(self.log_view)
+        left_panel.append(log_scroller)
+
+        # Button callbacks
+        self.btn_katago_start.connect("clicked", lambda w: self._on_katago_start_clicked())
+        self.btn_katago_stop.connect("clicked", lambda w: self._on_katago_stop_clicked())
+
         return left_panel
+
+    def _append_log_line(self, text: str):
+        # always call from main thread; safe wrapper for background threads
+        def _do():
+            end = self.log_buffer.get_end_iter()
+            self.log_buffer.insert(end, text + "\n")
+            # auto-scroll to end
+            mark = self.log_buffer.create_mark(None, self.log_buffer.get_end_iter(), False)
+            self.log_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+
+        if GLib is not None:
+            GLib.idle_add(_do)
+        else:
+            _do()
+
+    def _on_katago_start_clicked(self):
+        try:
+            # prepare cfg only on first creation; subsequent calls ignore cfg
+            cfg = {
+                "binary_path": "/opt/KataGo/cpp/katago",  # замените на реальный путь или настройку UI
+                "start_option": "gtp",
+                # "model_file": None,
+                # "threads": 4,
+                # "extra_args": []
+                "config_file": "/home/user/katago/gtp_example.cfg",
+            }
+            kc = KatagoController.get_instance(cfg)
+            # subscribe to log callback once
+            # ensure we don't reassign multiple times
+            if getattr(self, "_katago_log_subscribed", False) is False:
+                def _log_cb(line: str):
+                    # ensure UI update happens in main thread
+                    if GLib is not None:
+                        GLib.idle_add(lambda: self._append_log_line(line))
+                    else:
+                        self._append_log_line(line)
+
+                kc.subscribe_to_log(_log_cb)
+                self._katago_log_subscribed = True
+
+            kc.start()
+            self._append_log_line("KataGo: start requested")
+        except Exception as e:
+            self._append_log_line(f"KataGo start error: {e}")
+
+    def _on_katago_stop_clicked(self):
+        try:
+            # get instance without cfg (must exist)
+            try:
+                kc = KatagoController.get_instance()
+            except Exception:
+                # if not created yet, nothing to stop
+                self._append_log_line("KataGo: controller not running")
+                return
+            kc.stop()
+            self._append_log_line("KataGo: stop requested")
+        except Exception as e:
+            self._append_log_line(f"KataGo stop error: {e}")
 
     def _wire_nav_buttons(self):
         # кнопки уже созданы в get_analysis_box и сохранены в self

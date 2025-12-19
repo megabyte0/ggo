@@ -28,7 +28,8 @@ class Controller:
         self.tree_canvas: Optional[TreeCanvas] = None
         self.tree_store = None
         self.tree_view = None
-        self.current_node: Optional[Node] = None
+        self._board_view_node_cached: Optional[Node] = None
+        # self.current_node: Optional[Node] = None
         # wire board view callbacks if available
         try:
             board_view.on_click(self._on_click)
@@ -53,10 +54,6 @@ class Controller:
             self.tree_canvas.set_on_node_selected(self._on_tree_node_selected)
         except Exception:
             setattr(self.tree_canvas, "_on_node_selected_cb", self._on_tree_node_selected)
-        # push current root if any
-        # if DEBUG:
-        #     print("[Controller] attach_tree_canvas setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
-        self._refresh_tree_canvas()
 
     def attach_tree_widgets(self, tree_store, tree_view):
         self.tree_store = tree_store
@@ -90,34 +87,6 @@ class Controller:
         main_nodes = self.tree.collect_mainline_nodes()
         if main_nodes:
             self.current_node = main_nodes[-1]
-        # update canvas
-        # if DEBUG:
-        #     print("[Controller] load_game_tree setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
-        self._refresh_tree_canvas()
-        moves = []
-        for nd in main_nodes:
-            # convert node -> "B pd" etc.
-            mv = None
-            if hasattr(nd, "get_prop"):
-                b = nd.get_prop("B")
-                w = nd.get_prop("W")
-                if b and len(b) > 0:
-                    mv = f"B {b[0]}"
-                elif w and len(w) > 0:
-                    mv = f"W {w[0]}"
-            else:
-                for k, vals in getattr(nd, "props", []):
-                    if k == "B" and vals:
-                        mv = f"B {vals[0]}"
-                        break
-                    if k == "W" and vals:
-                        mv = f"W {vals[0]}"
-                        break
-            if mv:
-                moves.append(mv)
-        if DEBUG:
-            print("[Controller] mainline moves to apply:", moves)
-        self._apply_move_sequence_to_board(moves)
 
     # --- TreeStore building (Gtk) ---
     def _rebuild_tree_store(self):
@@ -154,8 +123,7 @@ class Controller:
             return
         if DEBUG:
             print("[Controller] _on_tree_selection_changed: node id", id(node))
-        self._set_current_node(node, select_in_tree_canvas=False)
-        # self.get_game_tree()._sync_is_current(node)
+        self.game_tree.current = node
 
     # --- TreeCanvas callback ---
     def _on_tree_node_selected(self, node):
@@ -163,21 +131,7 @@ class Controller:
             print("[Controller] _on_tree_node_selected: node id", id(node))
         if node is None:
             return
-        self._set_current_node(node, select_in_tree_canvas=True)
-        # self.get_game_tree()._sync_is_current(node)
-
-    def _set_current_node(self, node: Node, select_in_tree_canvas: bool = True) -> None:
-        self.current_node = node
-        moves = self.tree.get_node_path(node)
-        self._apply_move_sequence_to_board(moves)
-        GLib.idle_add(self._refresh_view)
-        if select_in_tree_canvas:
-            # select in canvas
-            try:
-                if self.tree_canvas:
-                    self.tree_canvas.select_node(node)
-            except Exception as e:
-                print("[Controller] _set_current_node tree_canvas.select_node:", e)
+        self.game_tree.current = node
 
     # --- Board callbacks ---
     def _on_click(self, r: int, c: int, n_press: int):
@@ -190,74 +144,32 @@ class Controller:
         found = None
         for ch in getattr(parent, "children", []):
             # compare by first B/W prop
-            mv = None
-            if hasattr(ch, "get_prop"):
-                b = ch.get_prop("B");
-                w = ch.get_prop("W")
-                if b and len(b) > 0:
-                    mv = f"B {b[0]}"
-                elif w and len(w) > 0:
-                    mv = f"W {w[0]}"
-            else:
-                for k, vals in getattr(ch, "props", []):
-                    if k in ("B", "W") and vals:
-                        mv = f"{k} {vals[0]}"
-                        break
+            mv = self._node_to_string(ch)
             if mv and mv.endswith(sgf_coord):
                 found = ch
                 break
 
         if found is None:
-            # add move in-place
-            if DEBUG:
-                print("[Controller] adding move under parent:", parent, "parent id:", id(parent))
-            new_node = self.tree.add_move(parent, color, sgf_coord, props=None)
-            if DEBUG:
-                # сразу после создания/получения node
-                print("[DBG add_move] Controller id: ", id(self), "TreeAdapter id:", id(self.tree), "game_tree id:",
-                      id(self.tree.get_game_tree()), "root id:", id(self.tree.get_game_tree().root))
-                print(
-                    "[DBG add_move] parent:", new_node.parent,
-                    "(id: %s)" % (id(new_node.parent)),
-                    "new_node:", new_node,
-                    "(id: %s)" % (id(new_node))
-                )
-
             # try to apply to board model
-            rc = (r, c)
-            ok = self.board.play_move(color, rc)
-            if not ok:
-                # rollback
-                try:
-                    parent.children.remove(new_node)
-                except Exception:
-                    pass
+            ok = self.board.play_move(color, (r, c))
+            if ok:
+                # add move in-place
+                new_node = self.tree.add_move(parent, color, sgf_coord, props=None)
+                self._board_view_node_cached = new_node
+            else:
                 if DEBUG:
-                    print("[Controller] illegal move, rolled back")
+                    print("[Controller] illegal move, not added")
                 return
             # advance current node
             self.current_node = new_node
-            # self.get_game_tree()._sync_is_current(self.current_node)
-            # update tree canvas and store
-            # if DEBUG:
-            #     print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
-            self._refresh_tree_canvas()
             self._rebuild_tree_store()
-            if self.tree_canvas:
-                self.tree_canvas.select_node(new_node)
-            GLib.idle_add(self._refresh_view)
+            # GLib.idle_add(self._refresh_view)
         else:
             # navigate into existing child
             self.current_node = found
-            # self.get_game_tree()._sync_is_current(self.current_node)
-            moves = self.tree.get_node_path(found)
-            self._apply_move_sequence_to_board(moves)
-            # if DEBUG:
-            #     print("[Controller] _on_click setting root from", id(self.tree_canvas.root), "to", id(self.tree.get_root()))
-            self._refresh_tree_canvas()
-            if self.tree_canvas:
-                self.tree_canvas.select_node(found)
-            GLib.idle_add(self._refresh_view)
+            # moves = self.tree.get_node_path(found)
+            # self._apply_move_sequence_to_board(moves)
+            # GLib.idle_add(self._refresh_view)
 
     def _on_hover(self, r: int, c: int):
         # show ghost if legal
@@ -301,20 +213,7 @@ class Controller:
             if isinstance(mv, str):
                 normalized.append(mv)
             else:
-                # Node -> string
-                s = None
-                if hasattr(mv, "get_prop"):
-                    b = mv.get_prop("B");
-                    w = mv.get_prop("W")
-                    if b and len(b) > 0:
-                        s = f"B {b[0]}"
-                    elif w and len(w) > 0:
-                        s = f"W {w[0]}"
-                else:
-                    for k, vals in getattr(mv, "props", []):
-                        if k in ("B", "W") and vals:
-                            s = f"{k} {vals[0]}"
-                            break
+                s = self._node_to_string(mv)
                 if s:
                     normalized.append(s)
         if DEBUG:
@@ -345,17 +244,26 @@ class Controller:
         # refresh view
         self._refresh_view()
 
-    # --- helpers ---
-    def _refresh_tree_canvas(self):
-        if self.tree_canvas and self.tree.get_root():
-            try:
-                self.tree_canvas.set_tree_root()  # !
-                if self.current_node:
-                    self.tree_canvas.select_node(self.current_node)
-            except Exception as e:
-                print("[Controller] refresh_tree_canvas:", e)
+    def _node_to_string(self, node) -> str:
+        # Node -> string
+        s = None
+        if hasattr(node, "get_prop"):
+            b = node.get_prop("B")
+            w = node.get_prop("W")
+            if b and len(b) > 0:
+                s = f"B {b[0]}"
+            elif w and len(w) > 0:
+                s = f"W {w[0]}"
+        else:
+            for k, vals in getattr(node, "props", []):
+                if k in ("B", "W") and vals:
+                    s = f"{k} {vals[0]}"
+                    break
+        return s
 
+    # --- helpers ---
     def _refresh_view(self):
+        """ board: set board from model, queue_draw"""
         try:
             if hasattr(self.board.view, "set_board"):
                 self.board.view.set_board(self.board.get_board())
@@ -400,27 +308,31 @@ class Controller:
         mv = self._rc_to_sgf(r, c)
         print("[Controller] ctrl-click at", (r, c), "(%s)" % mv)
         game_tree = self.get_game_tree()
-        print("[Controller] ctrl-click current_node id:", id(self.current_node))
-        if self.current_node is None:
+        print("[Controller] ctrl-click current_node id:", id(self.game_tree.current))
+        if self.game_tree.current is None:
             return
-        found_node = game_tree.ascend_to_move(self.current_node, mv)
+        found_node = game_tree.ascend_to_move(self.game_tree.current, mv)
         print("[Controller] ctrl-click found:", found_node)
         if found_node is None:
             return
-        self._set_current_node(found_node, select_in_tree_canvas=True)
+        self.game_tree.current = found_node
 
     def _on_game_tree_event(self, event, payload):
         """Handle events from GameTree."""
         print("[Controller] on_game_tree_event:", event, payload)
         if event == "current_changed":
             node = payload
-            # update board by applying moves from root to node
-            try:
-                path = self.tree.get_node_path(node) if getattr(self, "tree", None) else None
-                if path:
-                    self._apply_move_sequence_to_board(path)
-            except Exception:
-                pass
+            if self._board_view_node_cached is not node:
+                # update board by applying moves from root to node
+                try:
+                    self._board_view_node_cached = node
+                    path = self.tree.get_node_path(node) if getattr(self, "tree", None) else None
+                    if path:
+                        self._apply_move_sequence_to_board(path)
+                except Exception:
+                    pass
+            else:
+                self._refresh_view()
             # update tree canvas highlight
             if getattr(self, "tree_canvas", None):
                 try:
@@ -432,7 +344,7 @@ class Controller:
             root = payload
             if getattr(self, "tree_canvas", None):
                 try:
-                    self.tree_canvas.set_tree_root(root)
+                    pass
                 except Exception:
                     pass
             try:

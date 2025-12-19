@@ -34,9 +34,6 @@ class AnalysisBox(Gtk.Box):
         def get_game_tree():
             return self.controller.get_game_tree()
 
-        def get_game_tree_root():
-            return self.controller.get_game_tree().root
-
         # Создаём board_view и контроллер раньше, чтобы callback'и могли к ним обращаться
         self.board_view = BoardView(board_size=19)
         print("[main_app] board_view id:", id(self.board_view))
@@ -66,7 +63,7 @@ class AnalysisBox(Gtk.Box):
 
         analysis_box.append(center)
 
-        right_panel = self.build_right_panel(get_game_tree, get_game_tree_root)
+        right_panel = self.build_right_panel(get_game_tree)
         analysis_box.append(right_panel)
 
         self._wire_game_tab_callbacks(analysis_box)
@@ -111,7 +108,6 @@ class AnalysisBox(Gtk.Box):
             # Обновляем TreeCanvas
             try:
                 # print("[MainWindow] setting tree root", id(self.tree_canvas.root), "to", id(root))
-                self.tree_canvas.set_tree_root()
                 game_tree = self.controller.get_game_tree()
                 for root_child in game_tree.root.children:
                     game_tree._sync_is_current(root_child)
@@ -141,8 +137,7 @@ class AnalysisBox(Gtk.Box):
         self.game_tab.set_rename_tab_callback(rename_tab)
         self.game_tab.set_on_load_callback(on_game_loaded)
 
-    def build_right_panel(self, get_game_tree: Callable[[], GameTree | None],
-                          get_game_tree_root: Callable[[], Node]) -> Gtk.Box:
+    def build_right_panel(self, get_game_tree: Callable[[], GameTree | None]) -> Gtk.Box:
         # right charts + tree
         right_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         right_panel.set_size_request(320, -1)
@@ -172,7 +167,7 @@ class AnalysisBox(Gtk.Box):
         # tree under charts: use TreeCanvas inside scrolled window
         tree_scroller = Gtk.ScrolledWindow()
         tree_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.tree_canvas = TreeCanvas(node_radius=3, level_vgap=24, sibling_hgap=12, get_root=get_game_tree_root)
+        self.tree_canvas = TreeCanvas(node_radius=3, level_vgap=24, sibling_hgap=12, get_game_tree=get_game_tree)
         tree_scroller.set_size_request(320, -1)
         tree_scroller.set_hexpand(False)
         tree_scroller.set_child(self.tree_canvas)

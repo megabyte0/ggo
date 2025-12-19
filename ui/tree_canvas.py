@@ -1,7 +1,7 @@
 # ui/tree_canvas.py
 import gi
 
-from ggo.game_tree import Node
+from ggo.game_tree import Node, GameTree
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Pango, PangoCairo, GLib
@@ -24,7 +24,7 @@ class TreeCanvas(Gtk.DrawingArea):
             node_radius: int = 3,
             level_vgap: int = 24,
             sibling_hgap: int = 12,
-            get_root: Callable[[], Node] = lambda: None,
+            get_game_tree: Callable[[], GameTree] = lambda: None,
     ):
         super().__init__()
         self.set_draw_func(self._on_draw, None)
@@ -37,15 +37,17 @@ class TreeCanvas(Gtk.DrawingArea):
         self.sibling_hgap = sibling_hgap
 
         # tree data (GameTree root node)
-        self._get_root = get_root
-        # self.root = None
+        self._get_root = lambda: get_game_tree().root
+        self._get_game_tree = get_game_tree
 
         # computed layout: list of _DrawNode and edges (parent_idx, child_idx)
         self._draw_nodes: List[_DrawNode] = []
         self._edges: List[Tuple[int, int]] = []
 
-        # selection: selected_node highlighted by outline
-        self.selected_node = None
+        # self.selected_node = None
+
+        # click callback
+        self._on_node_selected_cb: Optional[Callable[[Node], None]] = None
 
         # hit test map: index -> node
         self._hit_map: Dict[int, Any] = {}
@@ -55,19 +57,18 @@ class TreeCanvas(Gtk.DrawingArea):
         click.connect("pressed", self._on_click)
         self.add_controller(click)
 
-    # Public API
-    def set_tree_root(self):
-        """Передать корень GameTree (Node)."""
-        # self.root = root_node
-        self._recompute_layout()
-        # если доска пустая (корень без детей), выделяем корень
-        root = self._get_root()
-        if root is not None and not getattr(root, 'children', None):
-            self.selected_node = root
-        self.queue_draw()
+    # selection: selected_node highlighted by outline
+    # current node
+    @property
+    def selected_node(self) -> Node | None:
+        return self._get_game_tree().current
 
+    @selected_node.setter
+    def selected_node(self, node: Node | None) -> None:
+        self._get_game_tree().current = node
+
+    # Public API
     def clear(self):
-        # self.root = None
         self._draw_nodes = []
         self._edges = []
         self.selected_node = None
@@ -168,7 +169,7 @@ class TreeCanvas(Gtk.DrawingArea):
         self._hit_map = {i: dn.node for i, dn in enumerate(self._draw_nodes)}
 
     # helper: determine if node has a move
-    def _node_has_move(self, node) -> bool:
+    def _node_has_move(self, node: Optional[Node]) -> bool:
         if node is None:
             return False
         # Prefer Node.get_prop if available
@@ -289,7 +290,7 @@ class TreeCanvas(Gtk.DrawingArea):
                     cr.stroke()
 
     # Hit testing
-    def _hit_test(self, x: float, y: float) -> Optional[Any]:
+    def _hit_test(self, x: float, y: float) -> Optional[Node]:
         # For diamond nodes we still use circular approximation for hit testing.
         for dn in self._draw_nodes:
             dx = x - dn.x
@@ -299,7 +300,7 @@ class TreeCanvas(Gtk.DrawingArea):
         return None
 
     # Click handler
-    def _on_click(self, gesture, n_press, x, y):
+    def _on_click(self, gesture, n_press, x, y) -> None:
         node = self._hit_test(x, y)
         if node:
             self.selected_node = node
@@ -308,5 +309,5 @@ class TreeCanvas(Gtk.DrawingArea):
                 cb(node)
             self.queue_draw()
 
-    def set_on_node_selected(self, callback):
+    def set_on_node_selected(self, callback: Callable[[Node], None]) -> None:
         self._on_node_selected_cb = callback

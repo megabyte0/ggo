@@ -33,6 +33,7 @@ class AnalysisBox(Gtk.Box):
         self.btn_katago_stop: Optional[Gtk.Button] = None
         self.log_view: Optional[Gtk.TextView] = None
         self.log_buffer: Optional[Gtk.TextBuffer] = None
+        self.katago_controller: Optional[KatagoController] = None
         self.build_analysis_box()
 
     def build_analysis_box(self) -> Gtk.Box:
@@ -213,8 +214,10 @@ class AnalysisBox(Gtk.Box):
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.btn_katago_start = Gtk.Button(label="Start")
         self.btn_katago_stop = Gtk.Button(label="Stop")
+        btn_test = Gtk.Button(label="-->")
         btn_box.append(self.btn_katago_start)
         btn_box.append(self.btn_katago_stop)
+        btn_box.append(btn_test)
         left_panel.append(btn_box)
 
         # Log area
@@ -232,6 +235,7 @@ class AnalysisBox(Gtk.Box):
         # Button callbacks
         self.btn_katago_start.connect("clicked", lambda w: self._on_katago_start_clicked())
         self.btn_katago_stop.connect("clicked", lambda w: self._on_katago_stop_clicked())
+        btn_test.connect("clicked", lambda w: self._katago_sync_test())
 
         return left_panel
 
@@ -292,6 +296,22 @@ class AnalysisBox(Gtk.Box):
             self._append_log_line("KataGo: stop requested")
         except Exception as e:
             self._append_log_line(f"KataGo stop error: {e}")
+
+    def _katago_sync_test(self):
+        try:
+            # get instance without cfg (must exist)
+            try:
+                kc = KatagoController.get_instance()
+            except Exception:
+                # if not created yet, nothing to stop
+                self._append_log_line("KataGo: controller not running")
+                return
+            kc.sync_to_move_sequence(['B Q16', 'W D4', 'B Q4', 'W D16'])
+            self._append_log_line("KataGo: sync requested")
+            kc.start_analysis('B')
+            self._append_log_line("KataGo: kata-analyze requested")
+        except Exception as e:
+            self._append_log_line(f"KataGo sync error: {e}")
 
     def _wire_nav_buttons(self):
         # кнопки уже созданы в get_analysis_box и сохранены в self

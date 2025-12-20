@@ -5,6 +5,7 @@ from typing import Optional, Callable, List, Dict, Any
 # импорт вашего движка (предположительно katago_engine.KataGoEngine)
 from ggo.katago_engine import KataGoEngine, EngineConfig
 
+
 # Для примера, если у вас нет katago_engine, можно мокать поведение.
 # Здесь предполагается, что KataGoEngine имеет: start(), stop(), sync_to_move_sequence(...),
 # stop_analysing_variation(), и генерирует лог строки через callback on_log_line (необязательно).
@@ -38,6 +39,11 @@ class KatagoController:
         self._log_lines: List[str] = []
         self._log_lock = threading.Lock()
 
+        # moves cache
+        self._moves: List[str] = []
+        # is analysis started
+        self._is_analysis_started: bool = False
+
     # -------------------------
     # lifecycle
     # -------------------------
@@ -59,6 +65,7 @@ class KatagoController:
             # self._engine.on_heatmap = self._on_heatmap
             # self._engine.on_error = self._on_error
             self._engine.on_log_line = self._on_engine_log_line  # if engine supports
+            self._moves = []
             self._engine.start()
             self._emit_log("KatagoController: start requested")
 
@@ -82,21 +89,56 @@ class KatagoController:
         with self._engine_lock:
             if self._engine:
                 try:
-                    # self._engine.stop_analysing_variation()
+                    self._engine.stop_analysing_variation()
+                    self._is_analysis_started = False
                     self._emit_log("KatagoController: stop analysing variation requested")
                 except Exception as e:
                     self._emit_log(f"KatagoController error: {e}")
 
-    def sync_to_move_sequence(self, moves: List[str], node_id: Optional[str] = None, params: Optional[Dict[str, Any]] = None):
+    def sync_to_move_sequence(self, moves: List[str], node_id: Optional[str] = None):
         with self._engine_lock:
             if not self._engine:
                 self._emit_log("KatagoController: engine not running; cannot sync")
                 return
             try:
+                index = -1
+                for n, (move, old_move) in enumerate(zip(moves, self._moves)):
+                    if move == old_move:
+                        index = n
+                    else:
+                        break
+                if index == -1:
+                    self._engine.clear_board()
+                    self._moves = []
+                else:
+                    for i in range(index + 1, len(self._moves)):
+                        self._engine.undo_move()
+                        self._moves = self._moves[:-1]
+                for move in moves[index + 1:]:
+                    self._engine.play_move(move)
+                    self._moves.append(move)
                 # self._engine.sync_to_move_sequence(moves, node_id=node_id, analysis_params=params)
                 self._emit_log(f"KatagoController: sync_to_move_sequence for node {node_id}")
             except Exception as e:
                 self._emit_log(f"KatagoController sync error: {e}")
+
+    def start_analysis(self, color: str | None = None):
+        with self._engine_lock:
+            if not self._engine:
+                self._emit_log("KatagoController: engine not running; cannot start analysis")
+                return
+            try:
+                if color is None:
+                    if not self._moves:
+                        color = "B"
+                    else:
+                        color = {"B": "W", "W": "B"}[self._moves[-1][0]]
+                self._engine.start_analysis(color)
+                self._is_analysis_started = True
+                self._emit_log(f"KatagoController: analysis starting for color {color}")
+            except Exception as e:
+                self._emit_log(f"KatagoController analysis start error: {e}")
+
     # -------------------------
     # log subscribe
     # -------------------------

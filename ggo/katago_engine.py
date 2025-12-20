@@ -1,12 +1,14 @@
 # katago_engine.py
 # Python 3.8+
+import re
 import subprocess
 import threading
 import queue
 import json
 import time
 import os
-from typing import Callable, Dict, List, Optional, Any
+from decimal import Decimal
+from typing import Callable, Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
 # If using GTK in integration, import GLib for thread->UI dispatch:
@@ -92,12 +94,29 @@ class KataGoEngine:
         self._last_emit_time = 0.0
         self._pending_update: Optional[AnalysisUpdate] = None
 
+        # info move matchers
+        self._info_move_matcher: Optional[re.Pattern] = None
+        self._info_move_parser: Optional[re.Pattern] = None
+        self._info_move_dict: Optional[Dict[str, Tuple[str, Callable[[str], Any] | None]]] = None
+        self._build_move_info_matchers()
+
     # -------------------------
     # Logging
     # -------------------------
     def _append_log(self, line: str):
         with self._log_lock:
             # print("[KatagoEngine] _append_log", line)
+            info_move_log_line = "info move \u2026"
+            if line.startswith("info move "):
+                if (
+                        self._log_lines
+                        and self._log_lines[-1] == info_move_log_line
+                ):
+                    line = None
+                else:
+                    line = info_move_log_line
+            if line is None:
+                return
             self._log_lines.append(line)
             # keep log bounded (optional)
             if len(self._log_lines) > 5000:
@@ -222,6 +241,8 @@ class KataGoEngine:
                     except Exception:
                         # not JSON or partial; push to queue for further processing
                         self._stdout_queue.put(line)
+                elif line.startswith("info move "):
+                    self._parse_move_info(line)
                 else:
                     # non-json line: push to queue for potential GTP parsing
                     self._stdout_queue.put(line)
@@ -365,6 +386,58 @@ class KataGoEngine:
             if self.on_error:
                 self.on_error(e)
 
+    def _build_move_info_matchers(self):
+        move = (r'(?:[A-HJ-T]\d{1,2}|pass)', lambda s: s)
+        _float = (r'-?\d+(?:\.\d+)?(?:e-?\d+)?', Decimal)
+        _int = (r'\d+', int)
+        moves = (r'(?:%s\ )*%s' % ((move[0],) * 2), lambda s: s.split(' '))
+        self._info_move_dict = {
+            'visits': _int,
+            'edgeVisits': _int,
+            'utility': _float,
+            'winrate': _float,
+            'scoreMean': _float,
+            'scoreStdev': _float,
+            'scoreLead': _float,
+            'scoreSelfplay': _float,
+            'prior': _float,
+            'lcb': _float,
+            'utilityLcb': _float,
+            'weight': _float,
+            'order': _int,
+            'pv': moves,
+            'isSymmetryOf': move,
+        }
+        self._info_move_matcher = re.compile(r'\s*info move (%s) ' % (move[0]))
+        info_move_parser_str = '(%s)' % ('|'.join(
+            '%s %s' % (k, _re)
+            for k, (_re, _fn) in self._info_move_dict.items()
+        ))
+        # print(info_move_parser_str)
+        self._info_move_parser = re.compile(info_move_parser_str)
+
+    def _parse_move_info(self, line) -> List[Tuple[str, Dict[str, str | Decimal | int | List[str]]]]:
+        _split = self._info_move_matcher.split(line)
+        assert _split[0] == ''
+        _split = _split[1:]
+        # assert len(_split[0]) % 2 == 0
+        result = []
+        for move, props_raw in zip(_split[::2], _split[1::2]):
+            props_split = self._info_move_parser.split(props_raw)
+            not_parsed = [i for i in props_split[::2] if i.strip() != '']
+            # if not_parsed:
+            #     print(not_parsed)
+            assert not not_parsed
+            props_split = props_split[1::2]
+            move_dict = {
+                key: self._info_move_dict[key][1](value)
+                for key, value in (i.split(' ', 1) for i in props_split)
+            }
+            # print(move, move_dict)
+            result.append((move, move_dict))
+        # print()
+        return result
+
     # -------------------------
     # Commands to engine
     # -------------------------
@@ -381,6 +454,46 @@ class KataGoEngine:
                 self._append_log(f"Failed to write to engine stdin: {e}")
                 if self.on_error:
                     self.on_error(e)
+
+    def play_move(self, move: str):
+        if self._proc is None:
+            raise RuntimeError("Engine not running")
+        try:
+            self._send_line(f"play {move}")
+        except Exception as e:
+            self._append_log(f"play_move error: {e}")
+            if self.on_error:
+                self.on_error(e)
+
+    def undo_move(self):
+        if self._proc is None:
+            raise RuntimeError("Engine not running")
+        try:
+            self._send_line("undo")
+        except Exception as e:
+            self._append_log(f"undo error: {e}")
+            if self.on_error:
+                self.on_error(e)
+
+    def clear_board(self):
+        if self._proc is None:
+            raise RuntimeError("Engine not running")
+        try:
+            self._send_line("clear_board")
+        except Exception as e:
+            self._append_log(f"play_move error: {e}")
+            if self.on_error:
+                self.on_error(e)
+
+    def start_analysis(self, color):
+        if self._proc is None:
+            raise RuntimeError("Engine not running")
+        try:
+            self._send_line(f"kata-analyze {color} 50")
+        except Exception as e:
+            self._append_log(f"play_move error: {e}")
+            if self.on_error:
+                self.on_error(e)
 
     def sync_to_move_sequence(self, moves: List[str], node_id: Optional[str] = None,
                               analysis_params: Optional[Dict[str, Any]] = None):
@@ -436,7 +549,7 @@ class KataGoEngine:
             # generic stop
             self._send_line("stop")
             # some builds accept "kata-stop"
-            self._send_line("kata-stop")
+            # self._send_line("kata-stop")
         except Exception as e:
             self._append_log(f"stop_analysing_variation error: {e}")
             if self.on_error:

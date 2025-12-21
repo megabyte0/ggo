@@ -2,6 +2,8 @@
 import threading
 from collections import defaultdict
 from typing import Optional, Callable, List, Dict, Any, Tuple
+
+from ggo.game_tree import Node
 from ggo.katago_engine import KataGoEngine, EngineConfig
 
 class KatagoController:
@@ -33,8 +35,10 @@ class KatagoController:
 
         # moves cache
         self._moves: List[str] = []
+        self._current_node: Optional[Node] = None
         # is analysis started
         self._is_analysis_started: bool = False
+        self._analysis_color: str | None = None
         self._suggested_moves: Dict[str, List[Tuple[str, dict]]] = {}
         self._suggested_moves_hits: Dict[str, int] = defaultdict(int)
 
@@ -80,13 +84,14 @@ class KatagoController:
         with self._engine_lock:
             if self._engine:
                 try:
-                    self._engine.stop_analysing_variation()
-                    self._is_analysis_started = False
                     self._emit_log("KatagoController: stop analysis requested")
+                    self._engine.stop_analysing_variation()
+                    # wait here for output_line.strip() == "="
+                    self._is_analysis_started = False
                 except Exception as e:
                     self._emit_log(f"KatagoController error: {e}")
 
-    def sync_to_move_sequence(self, moves: List[str], node_id: Optional[str] = None):
+    def _sync_to_move_sequence(self, moves: List[str], node_id: Optional[str] = None):
         with self._engine_lock:
             if not self._engine:
                 self._emit_log("KatagoController: engine not running; cannot sync")
@@ -113,6 +118,27 @@ class KatagoController:
             except Exception as e:
                 self._emit_log(f"KatagoController sync error: {e}")
 
+    def sync_to_nodes_sequence(self, node_path: List[Node]):
+        moves_seq = [
+            f"{color} {board_coord_notation}"
+            for color, sgf_move_notation, (row, col), board_coord_notation in (
+                move_node.get_move()
+                for move_node in node_path
+                if move_node.get_move() is not None
+            )
+        ]
+        self._sync_to_move_sequence(moves_seq)
+        self._current_node = node_path[-1]
+
+    @property
+    def current_node(self):
+        # for verifying if to update the board ui on backward analysis
+        return self._current_node
+
+    @property
+    def analysis_color(self):
+        return self._analysis_color
+
     def start_analysis(self, color: str | None = None):
         with self._engine_lock:
             if not self._engine:
@@ -124,10 +150,11 @@ class KatagoController:
                         color = "B"
                     else:
                         color = {"B": "W", "W": "B"}[self._moves[-1][0]]
-                self._engine.start_analysis(color)
-                self._is_analysis_started = True
                 self._suggested_moves = {}
                 self._suggested_moves_hits = defaultdict(int)
+                self._engine.start_analysis(color)
+                self._analysis_color = color
+                self._is_analysis_started = True
                 self._emit_log(f"KatagoController: analysis starting for color {color}")
             except Exception as e:
                 self._emit_log(f"KatagoController analysis start error: {e}")

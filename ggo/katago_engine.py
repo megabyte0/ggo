@@ -264,6 +264,7 @@ class KataGoEngine:
             raise RuntimeError("Engine not running")
         try:
             self._send_line("clear_board")
+            self._send_line("komi 6.5")
         except Exception as e:
             self._append_log(f"clear_board error: {e}")
             if self.on_error:

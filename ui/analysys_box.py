@@ -79,6 +79,8 @@ class AnalysisBox(Gtk.Box):
         # attach tree canvas to controller (контроллер будет обновлять дерево при необходимости)
         self.controller.attach_tree_canvas(self.tree_canvas)
 
+        self.controller.set_append_katago_log_line(self._append_log_line)
+
         # подключаем кнопки навигации
         self._wire_nav_buttons()
 
@@ -235,8 +237,8 @@ class AnalysisBox(Gtk.Box):
         left_panel.append(log_scroller)
 
         # Button callbacks
-        self.btn_katago_start.connect("clicked", lambda w: self._on_katago_start_clicked())
-        self.btn_katago_stop.connect("clicked", lambda w: self._on_katago_stop_clicked())
+        self.btn_katago_start.connect("clicked", lambda w: self.controller.katago_start())
+        self.btn_katago_stop.connect("clicked", lambda w: self.controller.katago_stop())
         self.btn_analysis_start_stop.connect("clicked", lambda w: self._on_start_stop_analysis_button())
 
         return left_panel
@@ -255,77 +257,6 @@ class AnalysisBox(Gtk.Box):
         else:
             _do()
 
-    def _on_katago_start_clicked(self):
-        try:
-            # prepare cfg only on first creation; subsequent calls ignore cfg
-            cfg = {
-                "binary_path": "/opt/KataGo/cpp/katago",  # замените на реальный путь или настройку UI
-                "start_option": "gtp",
-                # "model_file": None,
-                # "threads": 4,
-                # "extra_args": []
-                "config_file": "/home/user/katago/gtp_example.cfg",
-            }
-            kc = KatagoController.get_instance(cfg)
-            # subscribe to log callback once
-            # ensure we don't reassign multiple times
-            if getattr(self, "_katago_log_subscribed", False) is False:
-                def _log_cb(line: str):
-                    # ensure UI update happens in main thread
-                    if GLib is not None:
-                        GLib.idle_add(lambda: self._append_log_line(line))
-                    else:
-                        self._append_log_line(line)
-
-                kc.subscribe_to_log(_log_cb)
-                self._katago_log_subscribed = True
-
-            kc.start()
-            self._append_log_line("KataGo: start requested")
-        except Exception as e:
-            self._append_log_line(f"KataGo start error: {e}")
-
-    def _on_katago_stop_clicked(self):
-        try:
-            # get instance without cfg (must exist)
-            try:
-                kc = KatagoController.get_instance()
-            except Exception:
-                # if not created yet, nothing to stop
-                self._append_log_line("KataGo: controller not running")
-                return
-            kc.stop()
-            self._append_log_line("KataGo: stop requested")
-        except Exception as e:
-            self._append_log_line(f"KataGo stop error: {e}")
-
-    def _katago_analysis_start(self):
-        try:
-            # get instance without cfg (must exist)
-            try:
-                kc = KatagoController.get_instance()
-            except Exception:
-                # if not created yet, nothing to stop
-                self._append_log_line("KataGo: controller not running")
-                return
-            # kc.sync_to_move_sequence(['B Q16', 'W D4', 'B Q4', 'W D16'])
-            # self._append_log_line("KataGo: sync requested")
-            # kc.start_analysis('B')
-            self.controller._katago_controller_sync(self.controller.get_game_tree().current, force=True)
-            self._append_log_line("KataGo: kata-analyze requested")
-        except Exception as e:
-            self._append_log_line(f"KataGo sync error: {e}")
-
-    def _katago_analysis_stop(self):
-        # get instance without cfg (must exist)
-        try:
-            kc = KatagoController.get_instance()
-        except Exception:
-            # if not created yet, nothing to stop
-            self._append_log_line("KataGo: controller not running")
-            return
-        kc.stop_analysis()
-
     def _on_start_stop_analysis_button(self):
         try:
             kc = KatagoController.get_instance()
@@ -334,10 +265,10 @@ class AnalysisBox(Gtk.Box):
             self._append_log_line("KataGo: controller not running")
             return
         if kc._is_analysis_started:
-            self._katago_analysis_stop()
+            self.controller.katago_analysis_stop()
             label = '-->'
         else:
-            self._katago_analysis_start()
+            self.controller.katago_analysis_start()
             label = '||'
         self.btn_analysis_start_stop.set_property("label", label)
         self.katago_buttons_box.queue_draw()

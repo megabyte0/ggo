@@ -1,6 +1,9 @@
 # ui/controller.py
+from decimal import Decimal
 from typing import Any, List, Tuple, Optional, Callable
-from gi.repository import GLib
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, GLib
 
 from ggo.game_tree import GameTree, Node
 from ui.board_view import BoardView
@@ -30,6 +33,11 @@ class Controller:
         self.tree_store = None
         self.tree_view = None
         self._board_view_node_cached: Optional[Node] = None
+        self._append_log_line: Callable[[str], None] = lambda s: None
+        self._katago_log_subscribed: bool = False
+
+        self._lbl_winprob: Optional[Gtk.Label] = None
+        self._lbl_scorelead: Optional[Gtk.Label] = None
         # self.current_node: Optional[Node] = None
         # wire board view callbacks if available
         try:
@@ -44,6 +52,7 @@ class Controller:
     @property
     def current_node(self):
         return self.game_tree.current
+
     @current_node.setter
     def current_node(self, node):
         self.game_tree.current = node
@@ -62,6 +71,9 @@ class Controller:
         sel = self.tree_view.get_selection()
         sel.connect("changed", self._on_tree_selection_changed)
         self._rebuild_tree_store()
+
+    def set_append_katago_log_line(self, append_log_line: Callable[[str], None]) -> None:
+        self._append_log_line = append_log_line
 
     # --- loading SGF ---
     def load_game_tree(self):
@@ -289,7 +301,7 @@ class Controller:
     def _rc_to_sgf(self, r: int, c: int):
         return ''.join(chr(i + ord('a')) for i in (c, r))
 
-    def set_top_info_widgets(self, lbl_winprob_widget, lbl_scorelead_widget):
+    def set_top_info_widgets(self, lbl_winprob_widget: Gtk.Label, lbl_scorelead_widget: Gtk.Label):
         """
         Совместимость с MainWindow: пробрасываем виджеты в контроллер,
         чтобы MainWindow мог передавать метки для обновления.
@@ -384,6 +396,7 @@ class Controller:
 
     def _on_board_changed(self, node: Node | None):
         self._katago_controller_sync(node, force=False)
+        GLib.idle_add(lambda: self._update_labels())
 
     def _katago_controller_sync(self, node: Node | None, force: bool = False):
         if node is None:
@@ -396,15 +409,132 @@ class Controller:
         if not (kc._is_analysis_started or force):
             return
         # if not current tab: return
-        moves_seq = [
-            f"{color} {board_coord_notation}"
-            for color, sgf_move_notation, (row, col), board_coord_notation in (
-                move_node.get_move()
-                for move_node in self.get_game_tree().get_node_path(node)
-                if move_node.get_move() is not None
-            )
-        ]
         if kc._is_analysis_started:
             kc.stop_analysis()
-        kc.sync_to_move_sequence(moves_seq)
+        kc.sync_to_nodes_sequence(self.get_game_tree().get_node_path(node))
         kc.start_analysis()
+
+    def katago_start(self):
+        try:
+            # prepare cfg only on first creation; subsequent calls ignore cfg
+            cfg = {
+                "binary_path": "/opt/KataGo/cpp/katago",  # замените на реальный путь или настройку UI
+                "start_option": "gtp",
+                # "model_file": None,
+                # "threads": 4,
+                # "extra_args": []
+                "config_file": "/home/user/katago/gtp_example.cfg",
+            }
+            kc = KatagoController.get_instance(cfg)
+            # subscribe to log callback once
+            # ensure we don't reassign multiple times
+            if getattr(self, "_katago_log_subscribed", False) is False:
+                def _log_cb(line: str):
+                    # ensure UI update happens in main thread
+                    if GLib is not None:
+                        GLib.idle_add(lambda: self._append_log_line(line))
+                    else:
+                        self._append_log_line(line)
+
+                kc.subscribe_to_log(_log_cb)
+                self._katago_log_subscribed = True
+                kc.on_move_info = self._on_katago_info_move
+
+            kc.start()
+            self._append_log_line("KataGo: start requested")
+        except Exception as e:
+            self._append_log_line(f"KataGo start error: {e}")
+
+    def katago_stop(self):
+        try:
+            # get instance without cfg (must exist)
+            try:
+                kc = KatagoController.get_instance()
+            except Exception:
+                # if not created yet, nothing to stop
+                self._append_log_line("KataGo: controller not running")
+                return
+            kc.stop()
+            self._append_log_line("KataGo: stop requested")
+        except Exception as e:
+            self._append_log_line(f"KataGo stop error: {e}")
+
+    def katago_analysis_start(self):
+        try:
+            # get instance without cfg (must exist)
+            try:
+                kc = KatagoController.get_instance()
+            except Exception:
+                # if not created yet, nothing to stop
+                self._append_log_line("KataGo: controller not running")
+                return
+            # kc.sync_to_move_sequence(['B Q16', 'W D4', 'B Q4', 'W D16'])
+            # self._append_log_line("KataGo: sync requested")
+            # kc.start_analysis('B')
+            self._katago_controller_sync(self.get_game_tree().current, force=True)
+            self._append_log_line("KataGo: kata-analyze requested")
+        except Exception as e:
+            self._append_log_line(f"KataGo sync error: {e}")
+
+    def katago_analysis_stop(self):
+        # get instance without cfg (must exist)
+        try:
+            kc = KatagoController.get_instance()
+        except Exception:
+            # if not created yet, nothing to stop
+            self._append_log_line("KataGo: controller not running")
+            return
+        kc.stop_analysis()
+
+    def _on_katago_info_move(self):
+        kc = KatagoController.get_instance()
+        # fn = {"B": max, "W": min}[kc.analysis_color]
+        max_winrate_info_move = max((
+            l[0]
+            for move, l in kc._suggested_moves.items()
+        ), key=lambda d: d[1]["winrate"])
+        # print(max_winrate_info_move)
+        move, info_move_dict = max_winrate_info_move
+        winrate = info_move_dict["winrate"]
+        score_lead = info_move_dict["scoreLead"]
+        sum_n_visits = sum(
+            l[0][1]["visits"]
+            for move, l in kc._suggested_moves.items()
+        )
+        black_winrate = {"B": lambda x: x, "W": lambda x: 1 - x}[kc.analysis_color](winrate)
+        black_score_lead = {"B": lambda x: x, "W": lambda x: -x}[kc.analysis_color](score_lead)
+        for k, v in {
+            "SBKV": str(black_winrate * 100),
+            "GGBL": str(black_score_lead),
+            "GGNV": str(sum_n_visits),
+        }.items():
+            kc.current_node.set_prop(k, [v])
+        if kc.current_node is self.get_game_tree().current:
+            GLib.idle_add(lambda: self._update_labels())
+
+    def _update_labels(self):
+        # print("[Controller] update_labels")
+        current_node: Optional[Node] = self.get_game_tree().current
+        current_node_props = current_node.props_dict()
+        current_node_color = "B" if "B" in current_node_props else "W"
+        analysis_color = {"B": "W", "W": "B"}[current_node_color]
+
+        # winrate
+        black_winrate_str_list = current_node_props.get("SBKV")
+        if black_winrate_str_list:
+            black_winrate = Decimal(black_winrate_str_list[0])
+            winrate = {"B": lambda x: x, "W": lambda x: 100 - x}[analysis_color](black_winrate)
+            winrate_str = f"{winrate}%"
+        else:
+            winrate_str = "—"
+        self._lbl_winprob.set_property("label", f"Win: {winrate_str}")
+
+        # score_lead
+        black_score_lead_str_list = current_node_props.get("GGBL")
+        if black_score_lead_str_list:
+            black_score_lead = Decimal(black_score_lead_str_list[0])
+            score_lead = {"B": lambda x: x, "W": lambda x: -x}[analysis_color](black_score_lead)
+            score_lead_str = f"{score_lead}"
+        else:
+            score_lead_str = "—"
+        self._lbl_scorelead.set_property("label", f"Score lead: {score_lead_str}")

@@ -5,6 +5,7 @@ from gi.repository import GLib
 from ggo.game_tree import GameTree, Node
 from ui.board_view import BoardView
 from ui.controller_board import BoardAdapter, DEBUG as BOARD_DEBUG
+from ui.controller_katago import KatagoController
 from ui.controller_tree import TreeAdapter, DEBUG as TREE_DEBUG
 from ui.tree_canvas import TreeCanvas
 
@@ -97,7 +98,7 @@ class Controller:
         def add_node_recursive(parent_iter, node):
             mv = None
             if hasattr(node, "get_prop"):
-                b = node.get_prop("B");
+                b = node.get_prop("B")
                 w = node.get_prop("W")
                 if b and len(b) > 0:
                     mv = f"B {b[0]}"
@@ -156,6 +157,7 @@ class Controller:
                 # add move in-place
                 new_node = self.tree.add_move(parent, color, sgf_coord, props=None)
                 self._board_view_node_cached = new_node
+                self._on_board_changed(new_node)
             else:
                 if DEBUG:
                     print("[Controller] illegal move, not added")
@@ -326,6 +328,7 @@ class Controller:
                 # update board by applying moves from root to node
                 try:
                     self._board_view_node_cached = node
+                    self._on_board_changed(node)
                     path = self.tree.get_node_path(node) if getattr(self, "tree", None) else None
                     if path:
                         self._apply_move_sequence_to_board(path)
@@ -378,3 +381,30 @@ class Controller:
             self.game_tree.move_last()
         except Exception:
             pass
+
+    def _on_board_changed(self, node: Node | None):
+        self._katago_controller_sync(node, force=False)
+
+    def _katago_controller_sync(self, node: Node | None, force: bool = False):
+        if node is None:
+            return
+        try:
+            kc = KatagoController.get_instance()
+        except Exception:
+            # self._append_log_line("KataGo: controller not running")
+            return
+        if not (kc._is_analysis_started or force):
+            return
+        # if not current tab: return
+        moves_seq = [
+            f"{color} {board_coord_notation}"
+            for color, sgf_move_notation, (row, col), board_coord_notation in (
+                move_node.get_move()
+                for move_node in self.get_game_tree().get_node_path(node)
+                if move_node.get_move() is not None
+            )
+        ]
+        if kc._is_analysis_started:
+            kc.stop_analysis()
+        kc.sync_to_move_sequence(moves_seq)
+        kc.start_analysis()

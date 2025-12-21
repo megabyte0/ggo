@@ -1,15 +1,8 @@
-# ui/controller_katago.py
+# ui/controller_katago.py (updated)
 import threading
-from typing import Optional, Callable, List, Dict, Any
-
-# импорт вашего движка (предположительно katago_engine.KataGoEngine)
+from collections import defaultdict
+from typing import Optional, Callable, List, Dict, Any, Tuple
 from ggo.katago_engine import KataGoEngine, EngineConfig
-
-
-# Для примера, если у вас нет katago_engine, можно мокать поведение.
-# Здесь предполагается, что KataGoEngine имеет: start(), stop(), sync_to_move_sequence(...),
-# stop_analysing_variation(), и генерирует лог строки через callback on_log_line (необязательно).
-# Подстройте под реальную реализацию.
 
 class KatagoController:
     _instance = None
@@ -30,8 +23,7 @@ class KatagoController:
         self._engine: Optional[KataGoEngine] = None  # will hold KataGoEngine instance
         self._engine_lock = threading.Lock()
         self.on_log_callbacks: List[Callable[[str], None]] = []
-        self.on_analysis_update = None
-        self.on_heatmap = None
+        self.on_move_info: Optional[Callable[[], None]] = None
         self.on_error = None
         self.on_stopped = None
 
@@ -43,6 +35,8 @@ class KatagoController:
         self._moves: List[str] = []
         # is analysis started
         self._is_analysis_started: bool = False
+        self._suggested_moves: Dict[str, List[Tuple[str, dict]]] = {}
+        self._suggested_moves_hits: Dict[str, int] = defaultdict(int)
 
     # -------------------------
     # lifecycle
@@ -52,8 +46,6 @@ class KatagoController:
             if self._engine is not None:
                 self._emit_log("KatagoController: engine already running")
                 return
-            # create and start engine here
-            # Example (adapt to your engine):
             cfg_obj = EngineConfig(
                 binary_path=self.cfg["binary_path"],
                 start_option=self.cfg["start_option"],
@@ -61,11 +53,9 @@ class KatagoController:
                 model_file=self.cfg.get("model_file"),
             )
             self._engine = KataGoEngine(cfg_obj)
-            # self._engine.on_analysis_update = self._on_analysis_update
-            # self._engine.on_heatmap = self._on_heatmap
-            # self._engine.on_error = self._on_error
-            self._engine.on_log_line = self._on_engine_log_line  # if engine supports
-            self._moves = []
+            self._engine.on_log_line = self._on_engine_log_line
+            self._engine.on_move_info = self._on_engine_move_info
+            self._engine.on_error = self._on_error
             self._engine.start()
             self._emit_log("KatagoController: start requested")
 
@@ -77,6 +67,7 @@ class KatagoController:
             try:
                 self._engine.stop()
                 self._emit_log("KatagoController: stop requested")
+                self._is_analysis_started = False
             finally:
                 self._engine = None
                 if self.on_stopped:
@@ -85,13 +76,13 @@ class KatagoController:
                     except Exception:
                         pass
 
-    def stop_analysing_variation(self):
+    def stop_analysis(self):
         with self._engine_lock:
             if self._engine:
                 try:
                     self._engine.stop_analysing_variation()
                     self._is_analysis_started = False
-                    self._emit_log("KatagoController: stop analysing variation requested")
+                    self._emit_log("KatagoController: stop analysis requested")
                 except Exception as e:
                     self._emit_log(f"KatagoController error: {e}")
 
@@ -135,6 +126,8 @@ class KatagoController:
                         color = {"B": "W", "W": "B"}[self._moves[-1][0]]
                 self._engine.start_analysis(color)
                 self._is_analysis_started = True
+                self._suggested_moves = {}
+                self._suggested_moves_hits = defaultdict(int)
                 self._emit_log(f"KatagoController: analysis starting for color {color}")
             except Exception as e:
                 self._emit_log(f"KatagoController analysis start error: {e}")
@@ -162,31 +155,31 @@ class KatagoController:
                 cb(line)
             except Exception:
                 pass
+        # print("KataGoController log: %r" % line)
 
-    # optional: expose snapshot of log
-    def get_log(self) -> List[str]:
-        with self._log_lock:
-            return list(self._log_lines)
-
-    # engine callbacks (if engine provides raw lines)
     def _on_engine_log_line(self, line: str):
         # called from engine thread; safe to call _emit_log
         self._emit_log(line)
 
-    # placeholders for analysis/heatmap callbacks
-    def _on_analysis_update(self, update):
-        if self.on_analysis_update:
+    def _on_engine_move_info(self, move_info: List[Tuple[str, dict]]):
+        if not move_info:
+            return
+        first_move = move_info[0][0]
+        self._suggested_moves[first_move] = move_info
+        self._suggested_moves_hits[first_move] += 1
+        # print(
+        #     dict(self._suggested_moves_hits),
+        #     {
+        #         move: v[0][1]['visits']
+        #         for move, v in self._suggested_moves.items()
+        #     }
+        # )
+        # forward to external subscriber
+        if self.on_move_info:
             try:
-                self.on_analysis_update(update)
-            except Exception:
-                pass
-
-    def _on_heatmap(self, heat):
-        if self.on_heatmap:
-            try:
-                self.on_heatmap(heat)
-            except Exception:
-                pass
+                self.on_move_info()
+            except Exception as e:
+                self._emit_log(f"on_move_info handler error: {e}")
 
     def _on_error(self, err):
         self._emit_log(f"KatagoController error: {err}")

@@ -43,6 +43,8 @@ class KatagoController:
         self._analysis_color: str | None = None
         self._suggested_moves: Dict[str, List[Tuple[str, dict]]] = {}
         self._suggested_moves_hits: Dict[str, int] = defaultdict(int)
+        # backwards analysis
+        self._backwards_step_event: Optional[threading.Event] = None
 
     # -------------------------
     # lifecycle
@@ -74,6 +76,9 @@ class KatagoController:
                 self._engine.stop()
                 self._emit_log("KatagoController: stop requested")
                 self._is_analysis_started = False
+                # to not to undo on stop then start and back
+                self._moves = []
+                self._current_node = None
             finally:
                 self._engine = None
                 if self.on_stopped:
@@ -136,6 +141,15 @@ class KatagoController:
         ]
         self._sync_to_move_sequence(moves_seq)
         self._current_node = node_path[-1]
+
+    def stop_sync_start(self, node_path: List[Node], force_start: bool = False):
+        if not (self._is_analysis_started or force_start):
+            return
+        # if not current tab: return
+        if self._is_analysis_started:
+            self.stop_analysis()
+        self.sync_to_nodes_sequence(node_path)
+        self.start_analysis()
 
     @property
     def current_node(self):

@@ -1,4 +1,5 @@
 # ui/controller.py
+import threading
 from decimal import Decimal
 from typing import Any, List, Tuple, Optional, Callable
 import gi
@@ -41,6 +42,7 @@ class Controller:
 
         self._lbl_winprob: Optional[Gtk.Label] = None
         self._lbl_scorelead: Optional[Gtk.Label] = None
+        self._lbl_n_visits: Optional[Gtk.Label] = None
 
         self._winrate_chart: Optional[WinrateChart] = None
         self._score_chart: Optional[ScoreChart] = None
@@ -307,7 +309,12 @@ class Controller:
     def _rc_to_sgf(self, r: int, c: int):
         return ''.join(chr(i + ord('a')) for i in (c, r))
 
-    def set_top_info_widgets(self, lbl_winprob_widget: Gtk.Label, lbl_scorelead_widget: Gtk.Label):
+    def set_top_info_widgets(
+            self,
+            lbl_winprob_widget: Gtk.Label,
+            lbl_scorelead_widget: Gtk.Label,
+            lbl_n_visits_widget: Gtk.Label,
+    ):
         """
         Совместимость с MainWindow: пробрасываем виджеты в контроллер,
         чтобы MainWindow мог передавать метки для обновления.
@@ -315,6 +322,7 @@ class Controller:
         # Сохраним локально (на всякий случай) и пробросим в BoardAdapter, если нужно
         self._lbl_winprob = lbl_winprob_widget
         self._lbl_scorelead = lbl_scorelead_widget
+        self._lbl_n_visits = lbl_n_visits_widget
 
         # Если BoardAdapter/BoardView ожидают обновление — можно обновить сразу
         try:
@@ -402,7 +410,13 @@ class Controller:
             pass
 
     def _on_board_changed(self, node: Node | None):
-        self._katago_controller_sync(node, force=False)
+        try:
+            kc = KatagoController.get_instance()
+            ev: Optional[threading.Event] = getattr(kc, "_backwards_step_event", None)
+        except Exception:
+            ev = None
+        if ev is None:
+            self._katago_controller_sync(node, force=False)
         GLib.idle_add(lambda: self._update_labels())
 
     def _katago_controller_sync(self, node: Node | None, force: bool = False):
@@ -414,13 +428,8 @@ class Controller:
         except Exception:
             # self._append_log_line("KataGo: controller not running")
             return
-        if not (kc._is_analysis_started or force):
-            return
-        # if not current tab: return
-        if kc._is_analysis_started:
-            kc.stop_analysis()
-        kc.sync_to_nodes_sequence(self.get_game_tree().get_node_path(node))
-        kc.start_analysis()
+        node_path = self.get_game_tree().get_node_path(node)
+        kc.stop_sync_start(node_path, force_start=force)
 
     def katago_start(self):
         try:
@@ -517,6 +526,10 @@ class Controller:
             "GGNV": str(sum_n_visits),
         }.items():
             kc.current_node.set_prop(k, [v])
+        if sum_n_visits >= 1000:
+            ev: Optional[threading.Event] = getattr(kc, "_backwards_step_event", None)
+            if ev is not None:
+                ev.set()
         if kc.current_node is self.get_game_tree().current:
             GLib.idle_add(lambda: self._update_labels())
         GLib.idle_add(lambda: self._refresh_charts())
@@ -547,6 +560,14 @@ class Controller:
         else:
             score_lead_str = "—"
         self._lbl_scorelead.set_property("label", f"Score lead: {score_lead_str}")
+
+        # number of visits
+        number_of_visits_str_list = current_node_props.get("GGNV")
+        if number_of_visits_str_list:
+            number_of_visits_str = number_of_visits_str_list[0]
+        else:
+            number_of_visits_str = "—"
+        self._lbl_n_visits.set_property("label", f"Visits: {number_of_visits_str}")
 
     def attach_charts(self, winrate_chart: WinrateChart, score_chart: ScoreChart):
         self._winrate_chart = winrate_chart

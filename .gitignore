@@ -4,3 +4,4 @@
 /ggo.egg-info/
 /.idea/
 **/__pycache__/*
+/ggo/gtp_logs

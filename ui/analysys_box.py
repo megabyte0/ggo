@@ -2,6 +2,7 @@ from typing import Optional, Callable
 
 import gi
 
+from ggo.backward_analyzer import BackwardAnalyzer
 from ggo.game_tree import GameTree, Node
 from ui.board_view import BoardView
 from ui.controller import Controller
@@ -26,8 +27,10 @@ class AnalysisBox(Gtk.Box):
         self.btn_next: Optional[Gtk.Button] = None
         self.btn_prev: Optional[Gtk.Button] = None
         self.btn_first: Optional[Gtk.Button] = None
+        self.start_backwards_analysis_button: Optional[Gtk.Button] = None
         self.lbl_scorelead: Optional[Gtk.Label] = None
         self.lbl_winprob: Optional[Gtk.Label] = None
+        self.lbl_n_visits: Optional[Gtk.Label] = None
         self.var_list: Optional[Gtk.ListBox] = None
         self.var_scroller: Optional[Gtk.ScrolledWindow] = None
         self.main_window = main_window
@@ -201,10 +204,12 @@ class AnalysisBox(Gtk.Box):
         self.btn_prev = Gtk.Button(label="<")
         self.btn_next = Gtk.Button(label=">")
         self.btn_last = Gtk.Button(label=">>")
+        self.start_backwards_analysis_button = Gtk.Button(label="<|")
         nav.append(self.btn_first)
         nav.append(self.btn_prev)
         nav.append(self.btn_next)
         nav.append(self.btn_last)
+        nav.append(self.start_backwards_analysis_button)
         return nav
 
     def build_top_info_labels(self) -> Gtk.Box:
@@ -213,8 +218,10 @@ class AnalysisBox(Gtk.Box):
         top_info.set_halign(Gtk.Align.CENTER)
         self.lbl_winprob = Gtk.Label(label="Win: —")
         self.lbl_scorelead = Gtk.Label(label="Score lead: —")
+        self.lbl_n_visits = Gtk.Label(label="Visits: —")
         top_info.append(self.lbl_winprob)
         top_info.append(self.lbl_scorelead)
+        top_info.append(self.lbl_n_visits)
         return top_info
 
     def build_left_panel(self) -> Gtk.Box:
@@ -290,4 +297,11 @@ class AnalysisBox(Gtk.Box):
         self.btn_last.connect("clicked", lambda w: self.controller.go_last())
 
         # также даём контроллеру ссылки на метки сверху, чтобы он мог обновлять их
-        self.controller.set_top_info_widgets(self.lbl_winprob, self.lbl_scorelead)
+        self.controller.set_top_info_widgets(self.lbl_winprob, self.lbl_scorelead, self.lbl_n_visits)
+
+        BackwardAnalyzer(
+            self.start_backwards_analysis_button,
+            lambda: self.controller.get_game_tree().current,
+            ggnv_threshold=1000,
+            per_node_timeout=1200.0
+        )

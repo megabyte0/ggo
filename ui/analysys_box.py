@@ -7,7 +7,9 @@ from ui.board_view import BoardView
 from ui.controller import Controller
 from ui.controller_katago import KatagoController
 from ui.game_tab import GameTab
+from ui.score_chart import ScoreChart
 from ui.tree_canvas import TreeCanvas
+from ui.winrate_chart import WinrateChart
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
@@ -35,7 +37,8 @@ class AnalysisBox(Gtk.Box):
         self.katago_buttons_box: Optional[Gtk.Box] = None
         self.log_view: Optional[Gtk.TextView] = None
         self.log_buffer: Optional[Gtk.TextBuffer] = None
-        self.katago_controller: Optional[KatagoController] = None
+        self.winrate_chart: WinrateChart = WinrateChart(height=80)
+        self.score_chart: ScoreChart = ScoreChart(height=140)
         self.build_analysis_box()
 
     def build_analysis_box(self) -> Gtk.Box:
@@ -44,11 +47,11 @@ class AnalysisBox(Gtk.Box):
 
         # Создаём board_view и контроллер раньше, чтобы callback'и могли к ним обращаться
         self.board_view = BoardView(board_size=19)
-        print("[main_app] board_view id:", id(self.board_view))
+        # print("[main_app] board_view id:", id(self.board_view))
 
         # Создаём контроллер сразу — он может понадобиться в callback'ах загрузки
         self.controller = Controller(self.board_view)
-        print("[main_app] controller id:", id(self.controller))
+        # print("[main_app] controller id:", id(self.controller))
 
         # Теперь строим analysis_box (внутри него создаётся TreeCanvas и кнопки)
         # основной горизонтальный анализ-бокс: слева katago, центр доска, справа графики/дерево
@@ -152,10 +155,16 @@ class AnalysisBox(Gtk.Box):
         right_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         right_panel.set_size_request(320, -1)
 
-        # charts placeholders
-        right_panel.append(Gtk.Label(label="Winrate chart"))
-        right_panel.append(Gtk.Label(label="Score chart"))
-        right_panel.append(Gtk.Label(label="Diff chart"))
+        # charts
+        sc_win = Gtk.ScrolledWindow()
+        sc_win.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        sc_win.set_child(self.winrate_chart)
+        right_panel.append(sc_win)
+        sc_score = Gtk.ScrolledWindow()
+        sc_score.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        sc_score.set_child(self.score_chart)
+        right_panel.append(sc_score)
+        self.controller.attach_charts(self.winrate_chart, self.score_chart)
 
         # --- Game controls (Open/Save) placed above tree ---
         controls_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)

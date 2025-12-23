@@ -798,6 +798,29 @@ class GameTree:
         else:
             return self.root
 
+    def get_current_path(self) -> List[Node]:
+        path = []
+        if self._current is None:
+            return path
+
+        def ascend_to_root_child_fn(node: Node) -> bool:
+            path.append(node)
+            return True
+
+        self.ascend(ascend_to_root_child_fn, self._current)
+        path.reverse()
+
+        def descend_to_current_leaf_fn(node: Node):
+            if not node.is_current:
+                return None
+            current_child = self.get_current_child(node)
+            if current_child:
+                path.append(current_child)
+            return current_child
+
+        self.descend(descend_to_current_leaf_fn, self._current)
+        return path
+
     #
     # Moving last, first, next, prev
     #

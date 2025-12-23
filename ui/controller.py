@@ -2,6 +2,7 @@
 from decimal import Decimal
 from typing import Any, List, Tuple, Optional, Callable
 import gi
+
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
 
@@ -10,7 +11,9 @@ from ui.board_view import BoardView
 from ui.controller_board import BoardAdapter, DEBUG as BOARD_DEBUG
 from ui.controller_katago import KatagoController
 from ui.controller_tree import TreeAdapter, DEBUG as TREE_DEBUG
+from ui.score_chart import ScoreChart
 from ui.tree_canvas import TreeCanvas
+from ui.winrate_chart import WinrateChart
 
 # enable debug here
 DEBUG = True
@@ -38,6 +41,9 @@ class Controller:
 
         self._lbl_winprob: Optional[Gtk.Label] = None
         self._lbl_scorelead: Optional[Gtk.Label] = None
+
+        self._winrate_chart: Optional[WinrateChart] = None
+        self._score_chart: Optional[ScoreChart] = None
         # self.current_node: Optional[Node] = None
         # wire board view callbacks if available
         try:
@@ -341,6 +347,7 @@ class Controller:
                 try:
                     self._board_view_node_cached = node
                     self._on_board_changed(node)
+                    GLib.idle_add(lambda: self._refresh_charts())
                     path = self.tree.get_node_path(node) if getattr(self, "tree", None) else None
                     if path:
                         self._apply_move_sequence_to_board(path)
@@ -401,6 +408,7 @@ class Controller:
     def _katago_controller_sync(self, node: Node | None, force: bool = False):
         if node is None:
             return
+            # somewhere in the controller? fix empty node on start
         try:
             kc = KatagoController.get_instance()
         except Exception:
@@ -504,13 +512,14 @@ class Controller:
         black_winrate = {"B": lambda x: x, "W": lambda x: 1 - x}[kc.analysis_color](winrate)
         black_score_lead = {"B": lambda x: x, "W": lambda x: -x}[kc.analysis_color](score_lead)
         for k, v in {
-            "SBKV": str(black_winrate * 100),
+            "SBKV": str((black_winrate * 100).normalize()),
             "GGBL": str(black_score_lead),
             "GGNV": str(sum_n_visits),
         }.items():
             kc.current_node.set_prop(k, [v])
         if kc.current_node is self.get_game_tree().current:
             GLib.idle_add(lambda: self._update_labels())
+        GLib.idle_add(lambda: self._refresh_charts())
 
     def _update_labels(self):
         # print("[Controller] update_labels")
@@ -538,3 +547,12 @@ class Controller:
         else:
             score_lead_str = "—"
         self._lbl_scorelead.set_property("label", f"Score lead: {score_lead_str}")
+
+    def attach_charts(self, winrate_chart: WinrateChart, score_chart: ScoreChart):
+        self._winrate_chart = winrate_chart
+        self._score_chart = score_chart
+
+    def _refresh_charts(self):
+        nodes = self.get_game_tree().get_current_path()
+        self._winrate_chart.update_from_nodes(nodes, self.get_game_tree().current)
+        self._score_chart.update_from_nodes(nodes, self.get_game_tree().current)

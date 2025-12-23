@@ -1,5 +1,6 @@
 # ui/controller_katago.py (updated)
 import threading
+import time
 from collections import defaultdict
 from typing import Optional, Callable, List, Dict, Any, Tuple
 
@@ -31,7 +32,8 @@ class KatagoController:
 
         # internal log buffer
         self._log_lines: List[str] = []
-        self._log_lock = threading.Lock()
+        self._log_lock = threading.RLock()
+        self._log_condition = threading.Condition(self._log_lock)
 
         # moves cache
         self._moves: List[str] = []
@@ -87,6 +89,11 @@ class KatagoController:
                     self._emit_log("KatagoController: stop analysis requested")
                     self._engine.stop_analysing_variation()
                     # wait here for output_line.strip() == "="
+                    wait_returned = self._wait_until_output(
+                        lambda output_line: output_line.strip() == "=",
+                        timeout=2,
+                    )
+                    # print("[KatagoController] stop analysis, wait returned:", wait_returned)
                     self._is_analysis_started = False
                 except Exception as e:
                     self._emit_log(f"KatagoController error: {e}")
@@ -172,17 +179,39 @@ class KatagoController:
     # internal log handling
     # -------------------------
     def _emit_log(self, line: str):
+        """Добавляет строку в буфер и уведомляет ожидающие потоки."""
         with self._log_lock:
             self._log_lines.append(line)
-            if len(self._log_lines) > 5000:
-                self._log_lines = self._log_lines[-4000:]
-        # call external callback if present
-        for cb in self.on_log_callbacks:
+            with self._log_condition:
+                self._log_condition.notify_all()
+
+        # вызываем колбэки вне блокировки
+        for cb in list(self.on_log_callbacks):
             try:
                 cb(line)
             except Exception:
                 pass
-        # print("KataGoController log: %r" % line)
+
+    def _wait_until_output(self, predicate: Callable[[str], bool], timeout: float | None = None) -> bool:
+        """
+        Ждёт появления строки target в логах, но только новых записей,
+        появившихся после вызова этого метода. Возвращает True если найдено,
+        False при таймауте.
+        """
+        deadline = None if timeout is None else time.time() + timeout
+        with self._log_condition:
+            start_index = len(self._log_lines)
+            while True:
+                remaining = None if deadline is None else max(0.0, deadline - time.time())
+                if remaining == 0.0:
+                    return False
+                self._log_condition.wait(timeout=remaining)
+                # проверяем только новые записи с индекса start_index
+                for ln in self._log_lines[start_index:]:
+                    if predicate(ln):
+                        return True
+                # обновляем start_index, чтобы в следующей итерации смотреть только ещё более новые
+                start_index = len(self._log_lines)
 
     def _on_engine_log_line(self, line: str):
         # called from engine thread; safe to call _emit_log

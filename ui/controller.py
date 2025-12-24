@@ -577,6 +577,7 @@ class Controller:
         self._winrate_chart = winrate_chart
         self._score_chart = score_chart
         self._score_chart.set_game_tree_getter(self.get_game_tree)
+        self._winrate_chart.set_game_tree_getter(self.get_game_tree)
 
     def _refresh_charts(self):
         nodes = self.get_game_tree().get_current_path()

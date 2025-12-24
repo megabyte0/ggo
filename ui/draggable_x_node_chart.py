@@ -103,8 +103,9 @@ class DraggableXNodeChart(Gtk.DrawingArea):
         if self.current_point_index is not None:
             cr.set_source_rgb(*self.vertical_color)
             cr.set_line_width(1.0)
-            cr.move_to(self.margin_left + self.current_point_index + 0.5, self.margin_top)
-            cr.line_to(self.margin_left + self.current_point_index + 0.5, total_h - self.margin_bottom)
+            x = self.margin_left + self.current_point_index + 0.5
+            cr.move_to(x, self.margin_top)
+            cr.line_to(x, total_h - self.margin_bottom)
             cr.stroke()
 
     def y_of(self, v: float) -> float:

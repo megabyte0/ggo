@@ -27,6 +27,7 @@ class AnalysisBox(Gtk.Box):
         self.btn_next: Optional[Gtk.Button] = None
         self.btn_prev: Optional[Gtk.Button] = None
         self.btn_first: Optional[Gtk.Button] = None
+        self.backwards_analysis_entry: Optional[Gtk.Entry] = None
         self.start_backwards_analysis_button: Optional[Gtk.Button] = None
         self.lbl_scorelead: Optional[Gtk.Label] = None
         self.lbl_winprob: Optional[Gtk.Label] = None
@@ -204,11 +205,20 @@ class AnalysisBox(Gtk.Box):
         self.btn_prev = Gtk.Button(label="<")
         self.btn_next = Gtk.Button(label=">")
         self.btn_last = Gtk.Button(label=">>")
+        self.backwards_analysis_entry = Gtk.Entry(
+            # width_chars=5,
+            text="1000",
+            # width_request=50,
+            # hexpand=False,
+            # halign=Gtk.Align.START,
+        )
+        # self.backwards_analysis_entry.set_size_request(50, -1)
         self.start_backwards_analysis_button = Gtk.Button(label="<|")
         nav.append(self.btn_first)
         nav.append(self.btn_prev)
         nav.append(self.btn_next)
         nav.append(self.btn_last)
+        nav.append(self.backwards_analysis_entry)
         nav.append(self.start_backwards_analysis_button)
         return nav
 
@@ -299,9 +309,20 @@ class AnalysisBox(Gtk.Box):
         # также даём контроллеру ссылки на метки сверху, чтобы он мог обновлять их
         self.controller.set_top_info_widgets(self.lbl_winprob, self.lbl_scorelead, self.lbl_n_visits)
 
+        def get_number_variations_threshold() -> int:
+            try:
+                return int(self.backwards_analysis_entry.get_text())
+            except Exception:
+                result = 1000
+                try:
+                    self.backwards_analysis_entry.set_text(str(result))
+                except Exception:
+                    pass
+                return result
+
         BackwardAnalyzer(
             self.start_backwards_analysis_button,
             lambda: self.controller.get_game_tree().current,
-            ggnv_threshold=1000,
+            get_ggnv_threshold=get_number_variations_threshold,
             per_node_timeout=1200.0
         )

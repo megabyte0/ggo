@@ -21,11 +21,12 @@ class BackwardAnalyzer:
                  button,
                  current_node_resolver: Callable[[], Optional[object]],
                  *,
-                 ggnv_threshold: int = 1000,
+                 get_ggnv_threshold: Callable[[], int] = lambda: 1000,
                  per_node_timeout: float = 60.0):
         self.button = button
         self._get_current_node = current_node_resolver
-        self.ggnv_threshold = int(ggnv_threshold)
+        self.get_ggnv_threshold: Callable[[], int] = get_ggnv_threshold
+        self.ggnv_threshold: Optional[int] = None
         self.per_node_timeout = float(per_node_timeout)
 
         self._thread: Optional[threading.Thread] = None
@@ -55,6 +56,7 @@ class BackwardAnalyzer:
             self._step_event.clear()
             print("Setting the label in start")
             GLib.idle_add(self._set_button_label, "…")
+            self.ggnv_threshold = self.get_ggnv_threshold()
             self._thread = threading.Thread(target=self._worker, daemon=True)
             self._thread.start()
 
@@ -136,6 +138,11 @@ class BackwardAnalyzer:
         except Exception as e:
             print(" setattr kc._backwards_step_event:", e)
             pass
+
+        try:
+            setattr(kc, "_backwards_number_visits_threshold", self.ggnv_threshold)
+        except Exception as e:
+            print(" setattr kc._backwards_number_visits_threshold:", e)
 
         # стартовая нода берётся через переданный резолвер
         node = None

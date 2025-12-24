@@ -45,6 +45,7 @@ class KatagoController:
         self._suggested_moves_hits: Dict[str, int] = defaultdict(int)
         # backwards analysis
         self._backwards_step_event: Optional[threading.Event] = None
+        self._backwards_number_visits_threshold: Optional[int] = None
 
     # -------------------------
     # lifecycle

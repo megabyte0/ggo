@@ -526,7 +526,11 @@ class Controller:
             "GGNV": str(sum_n_visits),
         }.items():
             kc.current_node.set_prop(k, [v])
-        if sum_n_visits >= 1000:
+        backwards_number_visits_threshold = getattr(kc, "_backwards_number_visits_threshold", None)
+        if (
+                backwards_number_visits_threshold is not None
+                and sum_n_visits >= backwards_number_visits_threshold
+        ):
             ev: Optional[threading.Event] = getattr(kc, "_backwards_step_event", None)
             if ev is not None:
                 ev.set()

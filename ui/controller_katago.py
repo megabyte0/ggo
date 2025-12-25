@@ -7,6 +7,7 @@ from typing import Optional, Callable, List, Dict, Any, Tuple
 from ggo.game_tree import Node
 from ggo.katago_engine import KataGoEngine, EngineConfig
 
+
 class KatagoController:
     _instance = None
     _lock = threading.Lock()
@@ -173,6 +174,8 @@ class KatagoController:
                     else:
                         color = {"B": "W", "W": "B"}[self._moves[-1][0]]
                 self._suggested_moves = {}
+                if self._current_node is not None:
+                    self._current_node.analysis_results = self._suggested_moves  # hope it is a reference
                 self._suggested_moves_hits = defaultdict(int)
                 self._engine.start_analysis(color)
                 self._analysis_color = color

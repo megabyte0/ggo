@@ -149,4 +149,7 @@ class BoardAdapter:
     def get_board(self):
         return self.model.get_board()
 
+    def queue_view_draw(self):
+        self.view.darea.queue_draw()
+
     # coordinate conversions used by controller (GTP/SGF helpers could be here if desired)

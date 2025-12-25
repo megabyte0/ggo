@@ -53,6 +53,11 @@ class Controller:
             board_view.on_hover(self._on_hover)
             board_view.on_leave(self._on_leave)
             board_view.on_ctrl_click(self._on_ctrl_click)
+            board_view.set_analysis_results_getter(lambda: (
+                self.get_game_tree().current.analysis_results
+                if self.get_game_tree().current
+                else {}
+            ))
         except Exception as e:
             print("[Controller] failed to wire board view callbacks", e)
         self.game_tree.subscribe(self._on_game_tree_event)
@@ -536,6 +541,7 @@ class Controller:
                 ev.set()
         if kc.current_node is self.get_game_tree().current:
             GLib.idle_add(lambda: self._update_labels())
+            GLib.idle_add(lambda: self._queue_board_draw())
         GLib.idle_add(lambda: self._refresh_charts())
 
     def _update_labels(self):
@@ -572,6 +578,9 @@ class Controller:
         else:
             number_of_visits_str = "—"
         self._lbl_n_visits.set_property("label", f"Visits: {number_of_visits_str}")
+
+    def _queue_board_draw(self):
+        self.board.queue_view_draw()
 
     def attach_charts(self, winrate_chart: WinrateChart, score_chart: ScoreChart):
         self._winrate_chart = winrate_chart

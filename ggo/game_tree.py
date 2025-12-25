@@ -30,7 +30,14 @@ class Node:
     - parent: optional parent Node
     - _is_variation: True if this node was created as a variation (inside parentheses)
     """
-    __slots__ = ("props", "children", "parent", "_is_variation", "is_current")
+    __slots__ = (
+        "props",
+        "children",
+        "parent",
+        "_is_variation",
+        "is_current",
+        "analysis_results",
+    )
 
     def __init__(self, parent: Optional["Node"] = None, is_variation: bool = False):
         # props as list of (key, [values]) to preserve order and duplicates
@@ -39,6 +46,7 @@ class Node:
         self.parent: Optional["Node"] = parent
         self._is_variation: bool = is_variation
         self.is_current: bool = False
+        self.analysis_results: dict = {}
 
     # convenience: get property values (first occurrence) or None
     def get_prop(self, key: str) -> Optional[List[str]]:
@@ -731,11 +739,11 @@ class GameTree:
     # Setting current, subscribe, unsubscribe
     #
     @property
-    def current(self):
+    def current(self) -> Node | None:
         return self._current
 
     @current.setter
-    def current(self, node):
+    def current(self, node: Node) -> None:
         if node is self._current:
             return
         old = self._current

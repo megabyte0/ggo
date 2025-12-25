@@ -8,10 +8,19 @@ gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gtk, Pango, PangoCairo, Gdk
 import cairo
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Callable
 from ggo.goban_gtk4_modular import (
-    on_draw, compute_layout, draw_panel, draw_dashed_rectangles, draw_grid, draw_hoshi, draw_labels, draw_stones,
-    DEFAULT_STYLE)
+    on_draw,
+    compute_layout,
+    draw_panel,
+    draw_dashed_rectangles,
+    draw_grid,
+    draw_hoshi,
+    draw_labels,
+    draw_stones,
+    draw_text_cr,
+    DEFAULT_STYLE,
+)
 
 
 class BoardView(Gtk.Box):
@@ -34,7 +43,7 @@ class BoardView(Gtk.Box):
         self.board_state = [[None] * board_size for _ in range(board_size)]
         self.ghost = None
         self.heatmap = None
-        self._last_stone : Optional[Tuple[int, int, str]] = None
+        self._last_stone: Optional[Tuple[int, int, str]] = None
 
         # hover tracking
         self._last_hover = None
@@ -71,6 +80,8 @@ class BoardView(Gtk.Box):
         self._hover_cb = None
         self._leave_cb = None
         self._ctrl_click_cb = None
+
+        self.get_analysis_results: Callable[[], dict] = lambda: {}
 
     # Public API
     def set_board(self, board_state):
@@ -220,6 +231,7 @@ class BoardView(Gtk.Box):
         draw_labels(cr, board_size, layout)
         draw_stones(cr, board_size, layout, stones)
         # <--
+        self._draw_analysis_overlay(cr)
         self._draw_last_stone_mark(cr)
 
         self._get_origin_and_cell_from_layout()
@@ -261,3 +273,81 @@ class BoardView(Gtk.Box):
         cr.arc(cx, cy, mark_r, 0, 2.0 * math.pi)
         cr.fill()
 
+    def set_analysis_results_getter(self, get_results: Callable[[],dict]):
+        """results: dict[str, list[tuple[str, dict]]]"""
+        self.get_analysis_results = get_results
+        # self.darea.queue_draw()
+
+    def _parse_point(self, s: str):
+        # 'P16' -> (r,c) ; skip 'I' in columns
+        if not s: return None
+        col = s[0].upper()
+        row = int(s[1:])
+        # column index skipping 'I'
+        ci = ord(col) - ord('A')
+        if col > 'I': ci -= 1
+        r = self.board_size - row
+        c = ci
+        if 0 <= r < self.board_size and 0 <= c < self.board_size:
+            return r, c
+        return None
+
+    def _fmt_score_lead(self, val: float):
+        sign = '+' if val >= 0 else '-'
+        a = abs(float(val))
+        # start with 3 decimals, then reduce to fit constraints
+        for dec in (3, 2, 1, 0):
+            s = f"{a:.{dec}f}"
+            s = s.rstrip('0').rstrip('.') if '.' in s else s
+            if len(s) <= 4:
+                return f"{sign}{s}"
+        s = f"{int(round(a))}"
+        return f"{sign}{s}"
+
+    def _fmt_visits(self, v):
+        v = int(v)
+        if v >= 1_000_000:
+            s = f"{v / 1_000_000:.1f}m"
+        elif v >= 1000:
+            s = f"{v / 1000:.1f}k"
+        else:
+            s = str(v)
+        if s.endswith('.0m') or s.endswith('.0k'):
+            s = s.replace('.0', '')
+        return s
+
+    def _draw_analysis_overlay(self, cr: cairo.Context):
+        if not getattr(self, 'get_analysis_results', lambda: None)():
+            return
+        grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = self._layout['grid']
+        font_px = max(0, int(cell * 0.28))
+        shift_to_top = 0.35
+        for key, lst in dict(self.get_analysis_results()).items():
+            # key may be ignored; iterate entries
+            for move_str, props in lst[:1]:
+                pt = self._parse_point(move_str)
+                if not pt: continue
+                r, c = pt
+                cx = x0 + c * cell
+                cy = y0 + r * cell
+                score = props.get('scoreLead') if props else None
+                visits = props.get('visits') if props else None
+                if score is None and visits is None:
+                    continue
+                top_text = self._fmt_score_lead(score) if score is not None else ''
+                bot_text = self._fmt_visits(visits) if visits is not None else ''
+                # draw white text with slight black shadow for readability
+                cr.set_source_rgb(0, 0, 0)
+                draw_text = lambda txt, dy: (
+                    PangoCairo.create_layout(cr).set_text(txt, -1),
+                    cr.set_source_rgb(0, 0, 0),
+                    draw_text_cr(cr, cx + 1, cy + dy + 1, txt, font_px, align='center', valign='center',
+                                 color=(0, 0, 0))
+                )
+                if top_text:
+                    draw_text_cr(cr, cx, cy - cell * 0.18 - shift_to_top, top_text, font_px, align='center', valign='center',
+                                 color=(1, 1, 1))
+                if bot_text:
+                    draw_text_cr(cr, cx, cy + cell * 0.18 - shift_to_top, bot_text, font_px, align='center', valign='center',
+                                 color=(1, 1, 1))
+        cr.new_path()

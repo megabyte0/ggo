@@ -22,6 +22,18 @@ from ggo.goban_gtk4_modular import (
     DEFAULT_STYLE,
 )
 
+HEAT_COLORS = {
+    9: ("#59A80F", 0.8, 1.0),
+    8: ("#59A80F", 0.7, 0.9),
+    7: ("#4886D5", 0.8, 0.75),
+    6: ("#4886D5", 0.8, 0.6),
+    5: ("#4886D5", 0.7, 0.55),
+    4: ("#92278F", 0.8, 0.5),
+    3: ("#92278F", 0.7, 0.45),
+    2: ("#F02311", 0.8, 0.4),
+    1: ("#F02311", 0.7, 0.4),
+}
+
 
 class BoardView(Gtk.Box):
     def __init__(self, board_size: int = 19, base_margin: int = 20, style: Optional[Dict] = None):
@@ -231,6 +243,7 @@ class BoardView(Gtk.Box):
         draw_labels(cr, board_size, layout)
         draw_stones(cr, board_size, layout, stones)
         # <--
+        self._draw_heatmap(cr)
         self._draw_analysis_overlay(cr)
         self._draw_last_stone_mark(cr)
 
@@ -273,7 +286,7 @@ class BoardView(Gtk.Box):
         cr.arc(cx, cy, mark_r, 0, 2.0 * math.pi)
         cr.fill()
 
-    def set_analysis_results_getter(self, get_results: Callable[[],dict]):
+    def set_analysis_results_getter(self, get_results: Callable[[], dict]):
         """results: dict[str, list[tuple[str, dict]]]"""
         self.get_analysis_results = get_results
         # self.darea.queue_draw()
@@ -345,9 +358,47 @@ class BoardView(Gtk.Box):
                                  color=(0, 0, 0))
                 )
                 if top_text:
-                    draw_text_cr(cr, cx, cy - cell * 0.18 - shift_to_top, top_text, font_px, align='center', valign='center',
+                    draw_text_cr(cr, cx, cy - cell * 0.18 - shift_to_top, top_text, font_px, align='center',
+                                 valign='center',
                                  color=(1, 1, 1))
                 if bot_text:
-                    draw_text_cr(cr, cx, cy + cell * 0.18 - shift_to_top, bot_text, font_px, align='center', valign='center',
+                    draw_text_cr(cr, cx, cy + cell * 0.18 - shift_to_top, bot_text, font_px, align='center',
+                                 valign='center',
                                  color=(1, 1, 1))
         cr.new_path()
+
+    def _hex_to_rgb(self, hx):
+        hx = hx.lstrip('#')
+        return tuple(int(hx[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    def _draw_heatmap(self, cr: cairo.Context):
+        analysis = dict(self.get_analysis_results())
+        # collect all variations into flat list
+        variations = [i[0] for i in analysis.values()]
+        if not variations:
+            return
+        # compute maxVisitsWin
+        maxVisitsWin = max((v.get('visits', 0) * v.get('winrate', 0)) for move, v in variations)
+        grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = self._layout['grid']
+        for move, var in variations:
+            visits = var.get('visits', 0)
+            winrate = var.get('winrate', 0.0)
+            if not move:
+                continue
+            pt = self._parse_point(move)
+            if not pt:
+                continue
+            strength = round((visits * winrate * 8) / maxVisitsWin) + 1
+            strength = max(1, min(9, int(strength)))
+            hexcol, center_alpha, halo_scale = HEAT_COLORS[strength]
+            r, g, b = self._hex_to_rgb(hexcol)
+            cx = x0 + pt[1] * cell
+            cy = y0 + pt[0] * cell
+            radius = cell * 0.6
+            grad = cairo.RadialGradient(cx, cy, 0.0, cx, cy, radius)
+            grad.add_color_stop_rgba(0.0, r, g, b, center_alpha)
+            grad.add_color_stop_rgba(1.0, r, g, b, center_alpha * 0.12 * halo_scale)
+            cr.set_source(grad)
+            cr.arc(cx, cy, radius, 0, 2 * math.pi)
+            cr.fill()
+            cr.new_path()

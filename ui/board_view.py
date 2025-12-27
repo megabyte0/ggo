@@ -69,7 +69,7 @@ class BoardView(Gtk.Box):
             "ghost_white_alpha": 0.85,
             'ghost_allowed': False,
             "last_stone_mark_radius": 0.345,
-            "taken_variation_move_label": (0.15,0.15,0.15),
+            "taken_variation_move_label": (0.15, 0.15, 0.15),
             "variation_label_size_ratio": 0.38,
         })
         self.style = default_style if style is None else {**default_style, **style}
@@ -102,7 +102,7 @@ class BoardView(Gtk.Box):
         self.variation_delay = 0.5
         self._variation_sim = None
         self._variation_step = -1
-        self._variation_sources = []
+        self._variation_sources = set([])
         self._variation_playing = False
 
     # Public API
@@ -425,7 +425,7 @@ class BoardView(Gtk.Box):
                 GLib.source_remove(src)
             except Exception:
                 pass
-        self._variation_sources = []
+        self._variation_sources = set([])
         self._variation_sim = None
         self._variation_step = -1
         self._variation_playing = False
@@ -447,11 +447,16 @@ class BoardView(Gtk.Box):
         steps = max(0, len(sim) - 1)
         for i in range(1, steps + 1):
             ms = int(self.variation_delay * 1000 * i)
-            src = GLib.timeout_add(ms, self._variation_step_cb, i)
-            self._variation_sources.append(src)
+            src_holder: Dict[str, int | None] = {"src": None}
+            src = GLib.timeout_add(ms, self._variation_step_cb, i, src_holder)
+            src_holder["src"] = src
+            self._variation_sources.add(src)
 
-    def _variation_step_cb(self, idx):
+    def _variation_step_cb(self, idx: int, src_holder: Dict[str, int | None]):
         if not self._variation_playing or self._variation_sim is None: return False
+        src = src_holder["src"]
+        if src:
+            self._variation_sources.discard(src)
         max_step = len(self._variation_sim) - 1
         self._variation_step = min(idx, max_step)
         try:

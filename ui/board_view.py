@@ -2,15 +2,15 @@
 import math
 
 import gi
+from cairo import Context
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gtk, Pango, PangoCairo, Gdk
+from gi.repository import Gtk, PangoCairo, Gdk, GLib
 import cairo
 from typing import Optional, Dict, Tuple, Callable
 from ggo.goban_gtk4_modular import (
-    on_draw,
     compute_layout,
     draw_panel,
     draw_dashed_rectangles,
@@ -20,6 +20,8 @@ from ggo.goban_gtk4_modular import (
     draw_stones,
     draw_text_cr,
     DEFAULT_STYLE,
+    draw_stone,
+    cell_center_coords,
 )
 
 HEAT_COLORS = {
@@ -67,6 +69,8 @@ class BoardView(Gtk.Box):
             "ghost_white_alpha": 0.85,
             'ghost_allowed': False,
             "last_stone_mark_radius": 0.345,
+            "taken_variation_move_label": (0.15,0.15,0.15),
+            "variation_label_size_ratio": 0.38,
         })
         self.style = default_style if style is None else {**default_style, **style}
 
@@ -94,6 +98,12 @@ class BoardView(Gtk.Box):
         self._ctrl_click_cb = None
 
         self.get_analysis_results: Callable[[], dict] = lambda: {}
+
+        self.variation_delay = 0.5
+        self._variation_sim = None
+        self._variation_step = -1
+        self._variation_sources = []
+        self._variation_playing = False
 
     # Public API
     def set_board(self, board_state):
@@ -223,33 +233,39 @@ class BoardView(Gtk.Box):
     def on_draw(self, area, cr: cairo.Context, width: int, height: int, user_data):
         self._alloc_w = width
         self._alloc_h = height
+        # ggo.goban_gtk4_modular.on_draw copy/paste -->
+        self._layout = compute_layout(cr, self.board_size, width, height)
+        self._get_origin_and_cell_from_layout()
+        # Call modular draws in order
+        draw_panel(cr, self.board_size, self._layout, width, height)
+        draw_dashed_rectangles(cr, self._layout)
+
+        # grid, hoshi, stones, coords
+        draw_grid(cr, self.board_size, self._layout)
+        draw_hoshi(cr, self.board_size, self._layout)
+        draw_labels(cr, self.board_size, self._layout)
+        if not self._variation_playing:
+            self._draw_stones_from_state(cr, self.board_state)
+        # <--
+        if not self._variation_playing:
+            self._draw_heatmap(cr)
+            self._draw_analysis_overlay(cr)
+            self._draw_last_stone_mark(cr)
+            self._draw_ghost(cr)
+        else:
+            self._draw_variation_from_sim(cr)
+
+        return
+
+    def _draw_stones_from_state(self, cr: Context, board_state: list[list[str | None]]):
         recomputed_stones = [
             (row_n, column_n, color)
-            for row_n, row in enumerate(self.board_state)
+            for row_n, row in enumerate(board_state)
             for column_n, color in enumerate(row)
             if color is not None
         ]
-        board_size = self.board_size
         stones = recomputed_stones
-        # ggo.goban_gtk4_modular.on_draw copy/paste -->
-        self._layout = layout = compute_layout(cr, board_size, width, height)
-        # Call modular draws in order
-        draw_panel(cr, board_size, layout, width, height)
-        draw_dashed_rectangles(cr, layout)
-
-        # grid, hoshi, stones, coords
-        draw_grid(cr, board_size, layout)
-        draw_hoshi(cr, board_size, layout)
-        draw_labels(cr, board_size, layout)
-        draw_stones(cr, board_size, layout, stones)
-        # <--
-        self._draw_heatmap(cr)
-        self._draw_analysis_overlay(cr)
-        self._draw_last_stone_mark(cr)
-
-        self._get_origin_and_cell_from_layout()
-        self._draw_ghost(cr)
-        return
+        draw_stones(cr, self.board_size, self._layout, stones)
 
     def _get_origin_and_cell_from_layout(self):
         layout_grid = self._layout['grid']
@@ -291,7 +307,7 @@ class BoardView(Gtk.Box):
         self.get_analysis_results = get_results
         # self.darea.queue_draw()
 
-    def _parse_point(self, s: str):
+    def parse_point(self, s: str):
         # 'P16' -> (r,c) ; skip 'I' in columns
         if not s: return None
         col = s[0].upper()
@@ -338,7 +354,7 @@ class BoardView(Gtk.Box):
         for key, lst in dict(self.get_analysis_results()).items():
             # key may be ignored; iterate entries
             for move_str, props in lst[:1]:
-                pt = self._parse_point(move_str)
+                pt = self.parse_point(move_str)
                 if not pt: continue
                 r, c = pt
                 cx = x0 + c * cell
@@ -385,7 +401,7 @@ class BoardView(Gtk.Box):
             winrate = var.get('winrate', 0.0)
             if not move:
                 continue
-            pt = self._parse_point(move)
+            pt = self.parse_point(move)
             if not pt:
                 continue
             strength = round((visits * winrate * 8) / maxVisitsWin) + 1
@@ -402,3 +418,62 @@ class BoardView(Gtk.Box):
             cr.arc(cx, cy, radius, 0, 2 * math.pi)
             cr.fill()
             cr.new_path()
+
+    def stop_variation_playback(self):
+        for src in list(self._variation_sources):
+            try:
+                GLib.source_remove(src)
+            except Exception:
+                pass
+        self._variation_sources = []
+        self._variation_sim = None
+        self._variation_step = -1
+        self._variation_playing = False
+        try:
+            self.darea.queue_draw()
+        except Exception:
+            pass
+
+    def start_variation_playback_sim(self, sim):
+        self.stop_variation_playback()
+        if not sim: return
+        self._variation_sim = sim
+        self._variation_playing = True
+        self._variation_step = 0
+        try:
+            self.darea.queue_draw()
+        except Exception:
+            pass
+        steps = max(0, len(sim) - 1)
+        for i in range(1, steps + 1):
+            ms = int(self.variation_delay * 1000 * i)
+            src = GLib.timeout_add(ms, self._variation_step_cb, i)
+            self._variation_sources.append(src)
+
+    def _variation_step_cb(self, idx):
+        if not self._variation_playing or self._variation_sim is None: return False
+        max_step = len(self._variation_sim) - 1
+        self._variation_step = min(idx, max_step)
+        try:
+            self.darea.queue_draw()
+        except Exception:
+            pass
+        return False
+
+    def _draw_variation_from_sim(self, cr: cairo.Context):
+        states = self._variation_sim
+        if not states: return
+        step = self._variation_step
+        idx = min(step, len(states) - 1)
+        state, rc_to_number = states[idx]
+        self._draw_stones_from_state(cr, state)
+        for (r, c), index in rc_to_number.items():
+            text = str(index)
+            color = {
+                'B': self.style['stone_white'],
+                'W': self.style['stone_black'],
+                None: self.style['taken_variation_move_label'],
+            }[state[r][c]]
+            size = round(self.style['variation_label_size_ratio'] * self._cell)
+            cx, cy, cell = cell_center_coords(self._layout, r, c)
+            draw_text_cr(cr=cr, x=cx, y=cy, text=text, font_size=size, align="center", valign="center", color=color)

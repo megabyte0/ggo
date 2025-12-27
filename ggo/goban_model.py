@@ -2,6 +2,8 @@
 from collections import deque, namedtuple
 import hashlib
 import copy
+from typing import List
+
 
 # Exceptions
 class IllegalMove(Exception): pass
@@ -252,7 +254,7 @@ class Board:
             rows.append(''.join('.' if x is None else x for x in self._board[r]))
         return '\n'.join(rows)
 
-    def get_board(self):
+    def get_board(self) -> List[List[str|None]]:
         """Return a copy of internal board suitable for UI: list of lists with None/'B'/'W'."""
         return [row[:] for row in self._board]
 

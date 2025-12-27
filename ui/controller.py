@@ -198,7 +198,44 @@ class Controller:
             # self._apply_move_sequence_to_board(moves)
             # GLib.idle_add(self._refresh_view)
 
-    def _on_hover(self, r: int, c: int):
+    def _on_hover(self, r, c):
+        node = self.get_game_tree().current
+        p16 = self.rc_to_p16(r, c)
+        if node and getattr(node, 'analysis_results', None):
+            var_entry = node.analysis_results.get(p16)
+            if var_entry:
+                if isinstance(var_entry, list) and var_entry and isinstance(var_entry[0], list):
+                    variation = var_entry[0]
+                else:
+                    variation = var_entry
+                if (
+                        isinstance(variation, list)
+                        and variation
+                        and isinstance(variation[0], tuple)
+                        and len(variation[0]) == 2
+                        and isinstance(variation[0][1], dict)
+                        and 'pv' in variation[0][1]
+                ):
+                    variation = variation[0][1]['pv']
+                try:
+                    # ADAPT: reference to your board controller/adapter
+                    self.board.play_variation(variation)
+                    return
+                except Exception:
+                    pass
+        # fallback: stop variation and show ghost
+        try:
+            self.board.view.stop_variation_playback()
+            self._show_ghost_if_legal_else_clear(r, c)
+        except Exception:
+            pass
+
+    def rc_to_p16(self, r, c):
+        size = self.board.size
+        col = chr(ord('A') + c + int(c >= ord('I') - ord('A')))
+        return f"{col}{size-r}"
+
+    def _show_ghost_if_legal_else_clear(self, r: int, c: int):
         # show ghost if legal
         from ggo.goban_model import Move, IllegalMove
         color = self.board.current_player()
@@ -222,6 +259,7 @@ class Controller:
 
     def _on_leave(self):
         try:
+            self.board.view.stop_variation_playback()
             self.board.view.clear_ghost()
         except Exception:
             pass

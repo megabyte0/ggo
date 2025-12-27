@@ -291,23 +291,31 @@ def draw_dashed_rectangle(cr: cairo.Context, labels_left: float, labels_top: flo
 # Modular draw functions
 
 def draw_stones(cr: cairo.Context, board_size: int, layout, stones: List):
-    grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
+    for r, c, color in stones:
+        cx, cy, cell = cell_center_coords(layout, r, c)
+        draw_stone(cr, cx, cy, cell, color)
+
+def draw_stone(cr: cairo.Context, center_x: float, center_y: float, cell_size: float, color: str):
+    cx, cy, cell = center_x, center_y, cell_size
     stone_r = cell * DEFAULT_STYLE['stone_radius_factor']
     line_width = max(1.0, cell * DEFAULT_STYLE['line_width_factor'])
-    for r, c, color in stones:
-        cx = x0 + c * cell
-        cy = y0 + r * cell
-        if color.lower() in ["black", "b"]:
-            cr.set_source_rgb(*DEFAULT_STYLE['stone_black'])
-            cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
-            cr.fill()
-        else:
-            cr.set_source_rgb(*DEFAULT_STYLE['stone_white'])
-            cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
-            cr.fill_preserve()
-            cr.set_source_rgb(0, 0, 0)
-            cr.set_line_width(max(1.0, line_width * 0.9))
-            cr.stroke()
+    if color.lower() in ["black", "b"]:
+        cr.set_source_rgb(*DEFAULT_STYLE['stone_black'])
+        cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
+        cr.fill()
+    else:
+        cr.set_source_rgb(*DEFAULT_STYLE['stone_white'])
+        cr.arc(cx, cy, stone_r, 0, 2.0 * math.pi)
+        cr.fill_preserve()
+        cr.set_source_rgb(0, 0, 0)
+        cr.set_line_width(max(1.0, line_width * 0.9))
+        cr.stroke()
+
+def cell_center_coords(layout, r, c) -> Tuple[float, float, float]:
+    grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = layout["grid"]
+    cx = x0 + c * cell
+    cy = y0 + r * cell
+    return cx, cy, cell
 
 
 def draw_labels(cr: cairo.Context, board_size: int, layout):

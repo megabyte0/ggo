@@ -395,6 +395,8 @@ class BoardView(Gtk.Box):
             return
         # compute maxVisitsWin
         maxVisitsWin = max((v.get('visits', 0) * v.get('winrate', 0)) for move, v in variations)
+        if maxVisitsWin == 0:
+            return
         grid_left, grid_top, grid_right, grid_bottom, cell, x0, y0, grid_span = self._layout['grid']
         for move, var in variations:
             visits = var.get('visits', 0)

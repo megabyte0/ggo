@@ -134,12 +134,10 @@ class KatagoController:
 
     def sync_to_nodes_sequence(self, node_path: List[Node]):
         moves_seq = [
-            f"{color} {board_coord_notation}"
-            for color, sgf_move_notation, (row, col), board_coord_notation in (
-                move_node.get_move()
-                for move_node in node_path
-                if move_node.get_move() is not None
-            )
+            f"{color[-1:]} {board_coord_notation}"
+            for move_node in node_path
+            for color, sgf_move_notation, rc, board_coord_notation in move_node.get_moves()
+            if board_coord_notation is not None
         ]
         self._sync_to_move_sequence(moves_seq)
         self._current_node = node_path[-1]

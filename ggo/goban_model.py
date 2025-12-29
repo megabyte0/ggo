@@ -7,14 +7,23 @@ from typing import List
 
 # Exceptions
 class IllegalMove(Exception): pass
+
+
 class OccupiedPoint(IllegalMove): pass
+
+
 class Suicide(IllegalMove): pass
+
+
 class KoViolation(IllegalMove): pass
 
-Move = namedtuple('Move', ['color', 'point', 'is_pass', 'is_resign', 'move_number'])
+
+Move = namedtuple('Move', ['color', 'point', 'is_pass', 'is_resign', 'move_number', 'is_add'])
+
 
 def _opponent(color):
     return 'W' if color == 'B' else 'B'
+
 
 class Board:
     def __init__(self, size=19, komi=6.5, handicap=0, superko=False):
@@ -22,10 +31,10 @@ class Board:
         self.komi = komi
         self.handicap = handicap
         self.superko = superko
-        self._board = [[None]*size for _ in range(size)]
+        self._board = [[None] * size for _ in range(size)]
         self.to_move = 'B'
         self.move_number = 0
-        self.captures = {'B':0, 'W':0}
+        self.captures = {'B': 0, 'W': 0}
         self._history = []  # stack of states for undo
         self.position_hashes = []  # for superko
         self._push_history_snapshot()  # initial position hash
@@ -36,12 +45,12 @@ class Board:
 
     def get(self, point):
         if point is None: return None
-        r,c = point
+        r, c = point
         return self._board[r][c]
 
     def _neighbors(self, r, c):
-        for dr,dc in ((1,0),(-1,0),(0,1),(0,-1)):
-            nr, nc = r+dr, c+dc
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nr, nc = r + dr, c + dc
             if 0 <= nr < self.size and 0 <= nc < self.size:
                 yield nr, nc
 
@@ -56,22 +65,22 @@ class Board:
             p = stack.pop()
             if p in visited: continue
             visited.add(p)
-            r,c = p
-            for nr,nc in self._neighbors(r,c):
+            r, c = p
+            for nr, nc in self._neighbors(r, c):
                 if self._board[nr][nc] is None:
-                    liberties.add((nr,nc))
-                elif self._board[nr][nc] == color and (nr,nc) not in visited:
-                    stack.append((nr,nc))
+                    liberties.add((nr, nc))
+                elif self._board[nr][nc] == color and (nr, nc) not in visited:
+                    stack.append((nr, nc))
         return visited, liberties
 
     def _find_adjacent_enemy_groups_with_no_libs(self, point, color):
         """After placing color at point (not yet committed), find enemy groups with 0 liberties."""
-        r,c = point
+        r, c = point
         enemy = _opponent(color)
         to_check = set()
-        for nr,nc in self._neighbors(r,c):
+        for nr, nc in self._neighbors(r, c):
             if self._board[nr][nc] == enemy:
-                to_check.add((nr,nc))
+                to_check.add((nr, nc))
         captured_groups = []
         for p in to_check:
             stones, libs = self._group_and_liberties(p)
@@ -82,7 +91,7 @@ class Board:
     def _apply_capture(self, groups):
         removed = 0
         for group in groups:
-            for (r,c) in group:
+            for (r, c) in group:
                 color = self._board[r][c]
                 self._board[r][c] = None
                 removed += 1
@@ -136,7 +145,7 @@ class Board:
         if self.get(pt) is not None:
             raise OccupiedPoint("Point occupied")
         # simulate placement
-        r,c = pt
+        r, c = pt
         # place temporarily
         self._board[r][c] = move.color
         # find enemy groups to capture
@@ -144,13 +153,13 @@ class Board:
         # remove them temporarily
         removed = []
         for g in captured_groups:
-            for (rr,cc) in g:
-                removed.append(((rr,cc), self._board[rr][cc]))
+            for (rr, cc) in g:
+                removed.append(((rr, cc), self._board[rr][cc]))
                 self._board[rr][cc] = None
         # check own group liberties
         stones, libs = self._group_and_liberties(pt)
         # revert temporary placement and removals
-        for (rr,cc), col in removed:
+        for (rr, cc), col in removed:
             self._board[rr][cc] = col
         self._board[r][c] = None
         if len(libs) == 0:
@@ -162,7 +171,7 @@ class Board:
         board_copy = [row[:] for row in self._board]
         board_copy[r][c] = move.color
         for g in captured_groups:
-            for (rr,cc) in g:
+            for (rr, cc) in g:
                 board_copy[rr][cc] = None
         # compute hash
         s = []
@@ -196,25 +205,25 @@ class Board:
         # --- allow first move by either color ---
         # If this is the very first move (move_number == 0), accept any color
         # and set to_move accordingly. For subsequent moves enforce turn order.
-        if self.move_number == 0:
+        if self.move_number == 0 or move.is_add:
             # set to_move to the color of the first move to keep internal consistency
             self.to_move = move.color
         else:
             if move.color != self.to_move:
                 raise IllegalMove("Wrong player to move")
         # check occupancy
-        r,c = move.point
-        if not self.in_bounds(r,c):
+        r, c = move.point
+        if not self.in_bounds(r, c):
             raise IllegalMove("Out of bounds")
-        if self.get((r,c)) is not None:
+        if self.get((r, c)) is not None:
             raise OccupiedPoint("Occupied")
         # simulate and find captures
         self._board[r][c] = move.color
-        captured_groups = self._find_adjacent_enemy_groups_with_no_libs((r,c), move.color)
+        captured_groups = self._find_adjacent_enemy_groups_with_no_libs((r, c), move.color)
         # remove captured
         removed_count = self._apply_capture(captured_groups)
         # check own group liberties
-        stones, libs = self._group_and_liberties((r,c))
+        stones, libs = self._group_and_liberties((r, c))
         if len(libs) == 0:
             # rollback
             # restore captured stones (we didn't keep their colors easily) -> to be safe, we must not have committed until legal check
@@ -241,8 +250,15 @@ class Board:
         return
 
     # convenience wrapper
-    def play(self, color, point=None, is_pass=False, is_resign=False):
-        mv = Move(color=color, point=point, is_pass=is_pass, is_resign=is_resign, move_number=self.move_number+1)
+    def play(self, color, point=None, is_pass=False, is_resign=False, is_add=False):
+        mv = Move(
+            color=color,
+            point=point,
+            is_pass=is_pass,
+            is_resign=is_resign,
+            move_number=self.move_number + 1,
+            is_add=is_add,
+        )
         # validate via legal() to ensure atomicity
         self.legal(mv)
         self.apply_move(mv)
@@ -254,11 +270,10 @@ class Board:
             rows.append(''.join('.' if x is None else x for x in self._board[r]))
         return '\n'.join(rows)
 
-    def get_board(self) -> List[List[str|None]]:
+    def get_board(self) -> List[List[str | None]]:
         """Return a copy of internal board suitable for UI: list of lists with None/'B'/'W'."""
         return [row[:] for row in self._board]
 
     def current_player(self):
         """Return color to move as 'B' or 'W'."""
         return self.to_move
-

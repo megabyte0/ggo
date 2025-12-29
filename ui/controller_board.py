@@ -41,28 +41,29 @@ class BoardAdapter:
             except Exception:
                 pass
 
-    def play_move(self, color: str, rc: Tuple[int, int]) -> bool:
+    def play_move(self, color: str, rc: Tuple[int, int] | None, is_pass: bool=False, is_add: bool = False) -> bool:
         """Try to play a move on the model. Returns True if applied, False if illegal."""
-        r, c = rc
         try:
-            self.model.play(color, point=(r, c))
-            self.view.set_last_stone((r, c, color))
-            self.view.clear_ghost()
-            if hasattr(self.view, "place_black") and color == "B":
-                try:
-                    self.view.place_black(r, c)
-                except Exception:
-                    pass
-            if hasattr(self.view, "place_white") and color == "W":
-                try:
-                    self.view.place_white(r, c)
-                except Exception:
-                    pass
-            if hasattr(self.view, "queue_draw"):
-                try:
-                    self.view.queue_draw()
-                except Exception:
-                    pass
+            self.model.play(color, point=rc, is_pass=is_pass, is_add=is_add)
+            if rc is not None:
+                r, c = rc
+                self.view.set_last_stone((r, c, color))
+                self.view.clear_ghost()
+                if hasattr(self.view, "place_black") and color == "B":
+                    try:
+                        self.view.place_black(r, c)
+                    except Exception:
+                        pass
+                if hasattr(self.view, "place_white") and color == "W":
+                    try:
+                        self.view.place_white(r, c)
+                    except Exception:
+                        pass
+                if hasattr(self.view, "queue_draw"):
+                    try:
+                        self.view.queue_draw()
+                    except Exception:
+                        pass
             return True
         except IllegalMove as e:
             if DEBUG:
@@ -87,7 +88,7 @@ class BoardAdapter:
                     self.model.set_white(r, c)
                 else:
                     # fallback to play (may check legality)
-                    self.model.play(color, point=(r, c))
+                    self.model.play(color, point=(r, c), is_add=True)
             except Exception:
                 # ignore illegal handicap placements
                 pass

@@ -165,17 +165,18 @@ class Controller:
         sgf_coord = chr(ord('a') + c) + chr(ord('a') + r)
         if DEBUG:
             print("[Controller] board click at", (r, c), "sgf:", sgf_coord, "color:", color)
-        parent = self.current_node if self.current_node is not None else self.tree.find_last_mainline_node()
+        parent: Optional[Node] = self.current_node if self.current_node is not None else self.tree.find_last_mainline_node()
         # check existing child
-        found = None
-        for ch in getattr(parent, "children", []):
+        for child in getattr(parent, "children", []):
             # compare by first B/W prop
-            mv = self._node_to_string(ch)
-            if mv and mv.endswith(sgf_coord):
-                found = ch
+            if any(
+                mv and mv.endswith(sgf_coord)
+                for mv in self._node_to_string_list(child)
+            ):
+                # navigate into existing child
+                self.current_node = child
                 break
-
-        if found is None:
+        else:
             # try to apply to board model
             ok = self.board.play_move(color, (r, c))
             if ok:
@@ -190,13 +191,6 @@ class Controller:
             # advance current node
             self.current_node = new_node
             self._rebuild_tree_store()
-            # GLib.idle_add(self._refresh_view)
-        else:
-            # navigate into existing child
-            self.current_node = found
-            # moves = self.tree.get_node_path(found)
-            # self._apply_move_sequence_to_board(moves)
-            # GLib.idle_add(self._refresh_view)
 
     def _on_hover(self, r, c):
         node = self.get_game_tree().current
@@ -265,66 +259,42 @@ class Controller:
             pass
 
     # --- apply sequence to board (reset + replay) ---
-    def _apply_move_sequence_to_board(self, moves: List[Any]):
+    def _apply_move_sequence_to_board(self, moves: List[Node]):
         """
         moves: list of Node or list of strings "B pd"
         Reset board and replay moves.
         """
         # normalize to strings
-        normalized = []
-        for mv in moves:
-            if mv is None:
-                continue
-            if isinstance(mv, str):
-                normalized.append(mv)
-            else:
-                s = self._node_to_string(mv)
-                if s:
-                    normalized.append(s)
+        normalized = [
+            move
+            for node in moves
+            for move in self._node_to_color_rc_add_list(node)
+        ]
         if DEBUG:
             print("[Controller] applying move sequence:", normalized)
         # reset board
         self.board.reset()
         # apply moves
-        for mv in normalized:
-            if ' ' in mv:
-                color, coord = mv.split(' ', 1)
-                coord = coord.strip()
-                if coord == "" or coord.lower() == "pass":
-                    # ignore pass for now
-                    continue
-                r, c = self._sgf_to_rc(coord, size=self.board.size)
-                if r is None:
-                    continue
-                ok = self.board.play_move(color, (r, c))
-                if not ok:
-                    if DEBUG:
-                        print("[Controller] failed to apply move", mv)
-            else:
-                # treat as coord only
-                r, c = self._sgf_to_rc(mv, size=self.board.size)
-                if r is None:
-                    continue
-                self.board.play_move('B', (r, c))
+        for color, rc, is_add in normalized:
+            ok = self.board.play_move(color, rc=rc, is_pass=rc is None, is_add=is_add)
+            if not ok:
+                if DEBUG:
+                    print("[Controller] failed to apply move", (color, rc, is_add))
         # refresh view
         self._refresh_view()
 
-    def _node_to_string(self, node) -> str:
-        # Node -> string
-        s = None
-        if hasattr(node, "get_prop"):
-            b = node.get_prop("B")
-            w = node.get_prop("W")
-            if b and len(b) > 0:
-                s = f"B {b[0]}"
-            elif w and len(w) > 0:
-                s = f"W {w[0]}"
-        else:
-            for k, vals in getattr(node, "props", []):
-                if k in ("B", "W") and vals:
-                    s = f"{k} {vals[0]}"
-                    break
-        return s
+    def _node_to_string_list(self, node: Node) -> List[str]:
+        # Node -> string list
+        return [
+            f"{color[-1:]} {sgf_move_notation}"
+            for color, sgf_move_notation, rc, board_coord_notation in node.get_moves()
+        ]
+
+    def _node_to_color_rc_add_list(self, node:Node) -> List[Tuple[str, Tuple[int, int] | None, bool]]:
+        return [
+            (color[-1:], rc, color.startswith("A"))
+            for color, sgf_move_notation, rc, board_coord_notation in node.get_moves()
+        ]
 
     # --- helpers ---
     def _refresh_view(self):
@@ -552,7 +522,7 @@ class Controller:
         max_winrate_info_move = max((
             l[0]
             for move, l in kc._suggested_moves.items()
-        ), key=lambda d: d[1]["winrate"])
+        ), key=lambda d: d[1]["winrate"] * d[1]["visits"])
         # print(max_winrate_info_move)
         move, info_move_dict = max_winrate_info_move
         winrate = info_move_dict["winrate"]

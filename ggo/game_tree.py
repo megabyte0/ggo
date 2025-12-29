@@ -82,7 +82,10 @@ class Node:
 
     def has_move(self) -> bool:
         pd = self.props_dict()
-        return ("B" in pd and pd["B"]) or ("W" in pd and pd["W"])
+        return any(
+            color in pd and pd[color] and any(pd[color])
+            for color in ["B", "W"]
+        )
 
     def __repr__(self):
         pd = self.props_dict()
@@ -96,24 +99,28 @@ class Node:
     def set_is_variation(self, is_variation: bool) -> None:
         self._is_variation = is_variation
 
-    def get_move(self, board_size: int = 19) -> Tuple[str, str, Tuple[int, int], str] | None:
-        _get_move_result = self._get_move()
-        if _get_move_result is None:
-            return None
+    def get_moves(self, board_size: int = 19) -> List[Tuple[str, str, Tuple[int, int], str]]:
+        return [
+            self.convert_move(move, board_size)
+            for move in self._get_moves()
+        ]
+
+    def convert_move(self, _get_move_result: Tuple[str, str], board_size: int) -> Tuple[str, str | None, Tuple[int, int] | None, str | None]:
         color, sgf_move_notation = _get_move_result
         if len(sgf_move_notation) != 2:
-            return None
+            return color, None, None, None
         col = ord(sgf_move_notation[0]) - ord('a')
         row = ord(sgf_move_notation[1]) - ord('a')
         col_coord_notation = chr(ord('A') + col + int(col > ord('H') - ord('A')))
         board_coord_notation = f"{col_coord_notation}{board_size - row}"
         return color, sgf_move_notation, (row, col), board_coord_notation
 
-    def _get_move(self) -> Tuple[str, str] | None:
+    def _get_moves(self) -> List[Tuple[str, str]]:
+        result = []
         for k, vals in self.props:
-            if k in ["B", "W"] and vals:
-                return k, vals[0]
-        return None
+            if k in ["B", "W", "AB", "AW"] and vals:
+                result.extend((k, val) for val in vals)
+        return result
 
 
 # -------------------------

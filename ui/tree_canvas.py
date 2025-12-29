@@ -250,7 +250,7 @@ class TreeCanvas(Gtk.DrawingArea):
         cr.new_path()  # clear any leftover path to avoid artifacts
         for dn in self._draw_nodes:
             node = dn.node
-            has_move = self._node_has_move(node)
+            has_move = node.has_move()
             selected = (node is self.selected_node)
             is_variation = node._is_variation
 

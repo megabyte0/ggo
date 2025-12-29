@@ -108,7 +108,7 @@ class KatagoController:
                 except Exception as e:
                     self._emit_log(f"KatagoController error: {e}")
 
-    def _sync_to_move_sequence(self, moves: List[str], komi: Decimal | None = None):
+    def _sync_to_move_sequence(self, moves: List[str]) -> None:
         with self._engine_lock:
             if not self._engine:
                 self._emit_log("KatagoController: engine not running; cannot sync")
@@ -123,12 +123,6 @@ class KatagoController:
                 if index == -1:
                     self._engine.clear_board()
                     self._moves = []
-                    # move out the komi
-                    if komi is None or self._komi != komi:
-                        if komi is None:
-                            komi = Decimal("6.5")
-                        self._engine.set_komi(komi)
-                        self._komi = komi
                 else:
                     for i in range(index + 1, len(self._moves)):
                         self._engine.undo_move()
@@ -141,14 +135,31 @@ class KatagoController:
             except Exception as e:
                 self._emit_log(f"KatagoController sync error: {e}")
 
-    def sync_to_nodes_sequence(self, node_path: List[Node]):
+    def _sync_komi(self, komi: Decimal | None = None):
+        with self._engine_lock:
+            if not self._engine:
+                self._emit_log("KatagoController: engine not running; cannot sync komi")
+                return
+            try:
+                if komi is None or self._komi != komi:
+                    if komi is None:
+                        komi = Decimal("6.5")
+                    self._engine.set_komi(komi)
+                    self._komi = komi
+            except Exception as e:
+                self._emit_log(f"KatagoController sync komi error: {e}")
+
+    def sync_to_nodes_sequence(self, node_path: List[Node]) -> None:
         moves_seq = [
             f"{color[-1:]} {board_coord_notation}"
             for move_node in node_path
             for color, sgf_move_notation, rc, board_coord_notation in move_node.get_moves()
             if board_coord_notation is not None
         ]
-        # move out the komi
+        self._sync_to_move_sequence(moves_seq)
+        self._current_node = node_path[-1]
+
+    def sync_komi(self, node_path: List[Node]) -> None:
         km_props = [
             komi_str
             for node in node_path
@@ -162,8 +173,7 @@ class KatagoController:
                 komi = None
         else:
             komi = None
-        self._sync_to_move_sequence(moves_seq, komi)
-        self._current_node = node_path[-1]
+        self._sync_komi(komi)
 
     def stop_sync_start(self, node_path: List[Node], force_start: bool = False):
         if not (self._is_analysis_started or force_start):
@@ -172,6 +182,7 @@ class KatagoController:
         if self._is_analysis_started:
             self.stop_analysis()
         self.sync_to_nodes_sequence(node_path)
+        self.sync_komi(node_path)
         self.start_analysis()
 
     @property

@@ -2,6 +2,7 @@
 import threading
 import time
 from collections import defaultdict
+from decimal import Decimal
 from typing import Optional, Callable, List, Dict, Any, Tuple
 
 from ggo.game_tree import Node
@@ -39,6 +40,7 @@ class KatagoController:
         # moves cache
         self._moves: List[str] = []
         self._current_node: Optional[Node] = None
+        self._komi: Decimal | None = None
         # is analysis started
         self._is_analysis_started: bool = False
         self._analysis_color: str | None = None
@@ -81,6 +83,7 @@ class KatagoController:
                 # to not to undo on stop then start and back
                 self._moves = []
                 self._current_node = None
+                self._komi = None
             finally:
                 self._engine = None
                 if self.on_stopped:
@@ -105,7 +108,7 @@ class KatagoController:
                 except Exception as e:
                     self._emit_log(f"KatagoController error: {e}")
 
-    def _sync_to_move_sequence(self, moves: List[str], node_id: Optional[str] = None):
+    def _sync_to_move_sequence(self, moves: List[str], komi: Decimal | None = None):
         with self._engine_lock:
             if not self._engine:
                 self._emit_log("KatagoController: engine not running; cannot sync")
@@ -120,6 +123,12 @@ class KatagoController:
                 if index == -1:
                     self._engine.clear_board()
                     self._moves = []
+                    # move out the komi
+                    if komi is None or self._komi != komi:
+                        if komi is None:
+                            komi = Decimal("6.5")
+                        self._engine.set_komi(komi)
+                        self._komi = komi
                 else:
                     for i in range(index + 1, len(self._moves)):
                         self._engine.undo_move()
@@ -128,7 +137,7 @@ class KatagoController:
                     self._engine.play_move(move)
                     self._moves.append(move)
                 # self._engine.sync_to_move_sequence(moves, node_id=node_id, analysis_params=params)
-                self._emit_log(f"KatagoController: sync_to_move_sequence for node {node_id}")
+                # self._emit_log(f"KatagoController: sync_to_move_sequence for node {node_id}")
             except Exception as e:
                 self._emit_log(f"KatagoController sync error: {e}")
 
@@ -139,7 +148,21 @@ class KatagoController:
             for color, sgf_move_notation, rc, board_coord_notation in move_node.get_moves()
             if board_coord_notation is not None
         ]
-        self._sync_to_move_sequence(moves_seq)
+        # move out the komi
+        km_props = [
+            komi_str
+            for node in node_path
+            if node.get_prop('KM')
+            for komi_str in node.get_prop('KM')
+        ]
+        if km_props:
+            try:
+                komi = Decimal(km_props[0])
+            except Exception as e:
+                komi = None
+        else:
+            komi = None
+        self._sync_to_move_sequence(moves_seq, komi)
         self._current_node = node_path[-1]
 
     def stop_sync_start(self, node_path: List[Node], force_start: bool = False):

@@ -264,7 +264,16 @@ class KataGoEngine:
             raise RuntimeError("Engine not running")
         try:
             self._send_line("clear_board")
-            self._send_line("komi 6.5")
+        except Exception as e:
+            self._append_log(f"clear_board error: {e}")
+            if self.on_error:
+                self.on_error(e)
+
+    def set_komi(self, komi: Decimal):
+        if self._proc is None:
+            raise RuntimeError("Engine not running")
+        try:
+            self._send_line(f"komi {komi}")
         except Exception as e:
             self._append_log(f"clear_board error: {e}")
             if self.on_error:

@@ -221,7 +221,8 @@ class Controller:
         try:
             self.board.view.stop_variation_playback()
             self._show_ghost_if_legal_else_clear(r, c)
-        except Exception:
+        except Exception as e:
+            print("[Controller] _on_hover \"fallback\":", e)
             pass
 
     def rc_to_p16(self, r, c):
@@ -233,8 +234,14 @@ class Controller:
         # show ghost if legal
         from ggo.goban_model import Move, IllegalMove
         color = self.board.current_player()
-        mv = Move(color=color, point=(r, c), is_pass=False, is_resign=False,
-                  move_number=self.board.model.move_number + 1)
+        mv = Move(
+            color=color,
+            point=(r, c),
+            is_pass=False,
+            is_resign=False,
+            move_number=self.board.model.move_number + 1,
+            is_add=False,
+        )
         try:
             self.board.model.legal(mv)
             legal = True

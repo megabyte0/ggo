@@ -122,6 +122,52 @@ class Node:
                 result.extend((k, val) for val in vals)
         return result
 
+def get_name_and_version_from_toml_path(path: str = "../pyproject.toml") -> tuple[Any, Any]:
+    name = None
+    version = None
+
+    print("[get_name_and_version_from_toml_path] reading ", path, " at", os.getcwd())
+    try:
+        # try tomllib (py3.11+) then toml
+        try:
+            import tomllib
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    data = tomllib.load(f)
+            else:
+                data = {}
+        except Exception as e:
+            print("[get_name_and_version_from_toml_path] failed to load pyproject.toml:", path, e)
+            # try toml package
+            try:
+                import toml
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = toml.load(f)
+                else:
+                    data = {}
+            except Exception as e:
+                print("[get_name_and_version_from_toml_path] failed to load pyproject.toml:", path, e)
+                data = {}
+        # project table may be under 'project' (PEP 621) or under 'tool.poetry'
+        if isinstance(data, dict):
+            proj = data.get("project")
+            if proj and isinstance(proj, dict):
+                name = proj.get("name")
+                version = proj.get("version")
+            else:
+                # poetry style
+                tool = data.get("tool", {})
+                poetry = tool.get("poetry") if isinstance(tool, dict) else None
+                if poetry and isinstance(poetry, dict):
+                    name = poetry.get("name")
+                    version = poetry.get("version")
+    except Exception as e:
+        print("[get_name_and_version_from_toml_path] failed to load pyproject.toml:", path, e)
+        name = None
+        version = None
+    return name, version
+
 
 # -------------------------
 # GameTree wrapper
@@ -481,49 +527,7 @@ class GameTree:
         DT is current UTC date YYYY-MM-DD.
         """
         defaults = {}
-        name = None
-        version = None
-
-        print("[TreeAdapter] reading ", path, " at", os.getcwd())
-        # try tomllib (py3.11+), then toml package, then fallback
-        try:
-            try:
-                import tomllib  # Python 3.11+
-                if os.path.exists(path):
-                    with open(path, "rb") as f:
-                        data = tomllib.load(f)
-                else:
-                    data = {}
-            except Exception as e:
-                print("[TreeAdapter] failed to load pyproject.toml:", path, e)
-                # try toml package
-                try:
-                    import toml
-                    if os.path.exists(path):
-                        with open(path, "r", encoding="utf-8") as f:
-                            data = toml.load(f)
-                    else:
-                        data = {}
-                except Exception as e:
-                    print("[TreeAdapter] failed to load pyproject.toml:", path, e)
-                    data = {}
-            # project table may be under 'project' (PEP 621) or under 'tool.poetry'
-            if isinstance(data, dict):
-                proj = data.get("project")
-                if proj and isinstance(proj, dict):
-                    name = proj.get("name")
-                    version = proj.get("version")
-                else:
-                    # poetry style
-                    tool = data.get("tool", {})
-                    poetry = tool.get("poetry") if isinstance(tool, dict) else None
-                    if poetry and isinstance(poetry, dict):
-                        name = poetry.get("name")
-                        version = poetry.get("version")
-        except Exception as e:
-            print("[TreeAdapter] failed to load pyproject.toml:", path, e)
-            name = None
-            version = None
+        name, version = get_name_and_version_from_toml_path(path)
 
         # build defaults
         if name and version:
@@ -551,52 +555,17 @@ class GameTree:
 
         return defaults
 
-    def add_missing_game_props_1(self) -> Node:
+    def add_missing_game_props_1(self, path: str = "../pyproject.toml") -> Node:
         root = self.root
         # build defaults (minimal): GM from pyproject (name+version) if available, else "1"
-        gm = "1"
-        ap = "ggo:0.1"
-        try:
-            # try tomllib (py3.11+) then toml
-            import os
-            try:
-                import tomllib
-                if os.path.exists("pyproject.toml"):
-                    with open("pyproject.toml", "rb") as f:
-                        data = tomllib.load(f)
-                else:
-                    data = {}
-            except Exception:
-                try:
-                    import toml
-                    if os.path.exists("pyproject.toml"):
-                        with open("pyproject.toml", "r", encoding="utf-8") as f:
-                            data = toml.load(f)
-                    else:
-                        data = {}
-                except Exception:
-                    data = {}
-            name = None
-            version = None
-            if isinstance(data, dict):
-                proj = data.get("project")
-                if proj and isinstance(proj, dict):
-                    name = proj.get("name")
-                    version = proj.get("version")
-                else:
-                    tool = data.get("tool", {})
-                    poetry = tool.get("poetry") if isinstance(tool, dict) else None
-                    if poetry and isinstance(poetry, dict):
-                        name = poetry.get("name")
-                        version = poetry.get("version")
-            if name and version:
-                gm = f"{name} {version}"
-                ap = f"{name}:{version}"
-            elif name:
-                gm = str(name)
-                ap = f"{name}:0.0"
-        except Exception:
-            pass
+        name, version = get_name_and_version_from_toml_path(path)
+
+        if name and version:
+            ap = f"{name}:{version}"
+        elif name:
+            ap = f"{name}:0.0"
+        else:
+            ap = "ggo:0.1"
 
         # create the game node and attach to root
         try:
@@ -606,7 +575,7 @@ class GameTree:
         # canonical header props
         from datetime import datetime, timezone
         dt = datetime.now(timezone.utc).date().isoformat()
-        header_order = [("GM", [gm]), ("FF", ["4"]), ("CA", ["UTF-8"]), ("AP", [ap]), ("KM", ["6.5"]),
+        header_order = [("GM", ["1"]), ("FF", ["4"]), ("CA", ["UTF-8"]), ("AP", [ap]), ("KM", ["6.5"]),
                         ("SZ", ["19"]), ("DT", [dt])]
         for k, vals in header_order:
             game_node.props.append((k, list(vals)))

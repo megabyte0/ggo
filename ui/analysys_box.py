@@ -43,6 +43,7 @@ class AnalysisBox(Gtk.Box):
         self.log_buffer: Optional[Gtk.TextBuffer] = None
         self.winrate_chart: WinrateChart = WinrateChart(height=80)
         self.score_chart: ScoreChart = ScoreChart(height=140)
+        self.set_tab_label: Optional[Callable[[str], None]] = None
         self.build_analysis_box()
 
     def build_analysis_box(self) -> Gtk.Box:
@@ -97,7 +98,7 @@ class AnalysisBox(Gtk.Box):
         # callback: переименовать вкладку
         def rename_tab(basename: str):
             try:
-                self.notebook.set_tab_label_text(analysis_box, basename)  # ! .notebook does not exist
+                self.set_tab_label(basename)
             except Exception:
                 pass
 
@@ -326,3 +327,6 @@ class AnalysisBox(Gtk.Box):
             get_ggnv_threshold=get_number_variations_threshold,
             per_node_timeout=1200.0
         )
+
+    def set_tab_label_setter(self, tab_label_setter: Callable[[str], None]) -> None:
+        self.set_tab_label = tab_label_setter

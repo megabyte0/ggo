@@ -125,7 +125,7 @@ class TreeCanvas(Gtk.DrawingArea):
                 x += 2 * self.node_radius + self.sibling_hgap
 
         self.pixels_height = y0 + len(levels) * self.level_vgap + self.node_radius
-        self.set_size_request(-1, self.pixels_height)
+        self.set_size_request(self.node_radius + 8 + canvas_w, self.pixels_height)
 
         # create draw nodes in a deterministic traversal (preorder)
         index_map = {}

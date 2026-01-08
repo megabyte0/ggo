@@ -88,6 +88,7 @@ class AnalysisBox(Gtk.Box):
         self.controller.attach_tree_canvas(self.tree_canvas)
 
         self.controller.set_append_katago_log_line(self._append_log_line)
+        self.controller.subscribe_to_log_and_info_move()
 
         # подключаем кнопки навигации
         self._wire_nav_buttons()

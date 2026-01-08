@@ -453,34 +453,36 @@ class Controller:
 
     def katago_start(self):
         try:
-            # prepare cfg only on first creation; subsequent calls ignore cfg
-            cfg = {
-                "binary_path": "/opt/KataGo/cpp/katago",  # замените на реальный путь или настройку UI
-                "start_option": "gtp",
-                # "model_file": None,
-                # "threads": 4,
-                # "extra_args": []
-                "config_file": "/home/user/katago/gtp_example.cfg",
-            }
-            kc = KatagoController.get_instance(cfg)
-            # subscribe to log callback once
-            # ensure we don't reassign multiple times
-            if getattr(self, "_katago_log_subscribed", False) is False:
-                def _log_cb(line: str):
-                    # ensure UI update happens in main thread
-                    if GLib is not None:
-                        GLib.idle_add(lambda: self._append_log_line(line))
-                    else:
-                        self._append_log_line(line)
-
-                kc.subscribe_to_log(_log_cb)
-                self._katago_log_subscribed = True
-                kc.on_move_info = self._on_katago_info_move
-
+            # self.subscribe_to_log_and_info_move()
+            kc = KatagoController.get_instance()
             kc.start()
             self._append_log_line("KataGo: start requested")
         except Exception as e:
             self._append_log_line(f"KataGo start error: {e}")
+
+    def subscribe_to_log_and_info_move(self):
+        print("[Controller] subscribe_to_log_and_info_move, id(self):", id(self))
+        kc = KatagoController.get_instance()
+        # subscribe to log callback once
+        # ensure we don't reassign multiple times
+        if getattr(self, "_katago_log_subscribed", False) is False:
+            kc.subscribe_to_log(self._katago_log_cb)
+            self._katago_log_subscribed = True
+            kc.subscribe_to_move_info(self._on_katago_info_move)
+
+    def unsubscribe_from_log_and_info_move(self):
+        print("[Controller] unsubscribe_from_log_and_info_move, id(self):", id(self))
+        kc = KatagoController.get_instance()
+        if self._katago_log_subscribed:
+            kc.unsubscribe_to_log(self._katago_log_cb)
+            kc.unsubscribe_to_move_info(self._on_katago_info_move)
+
+    def _katago_log_cb(self, line: str) -> None:
+        # ensure UI update happens in main thread
+        if GLib is not None:
+            GLib.idle_add(lambda: self._append_log_line(line))
+        else:
+            self._append_log_line(line)
 
     def katago_stop(self):
         try:

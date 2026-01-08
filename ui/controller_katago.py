@@ -28,7 +28,7 @@ class KatagoController:
         self._engine: Optional[KataGoEngine] = None  # will hold KataGoEngine instance
         self._engine_lock = threading.Lock()
         self.on_log_callbacks: List[Callable[[str], None]] = []
-        self.on_move_info: Optional[Callable[[], None]] = None
+        self.on_move_info_callbacks: List[Callable[[], None]] = []
         self.on_error = None
         self.on_stopped = None
 
@@ -226,6 +226,15 @@ class KatagoController:
         self.on_log_callbacks.remove(cb)
 
     # -------------------------
+    # move info subscribe
+    # -------------------------
+    def subscribe_to_move_info(self, cb: Callable[[], None]):
+        self.on_move_info_callbacks.append(cb)
+
+    def unsubscribe_to_move_info(self, cb: Callable[[], None]):
+        self.on_move_info_callbacks.remove(cb)
+
+    # -------------------------
     # internal log handling
     # -------------------------
     def _emit_log(self, line: str):
@@ -281,9 +290,9 @@ class KatagoController:
         #     }
         # )
         # forward to external subscriber
-        if self.on_move_info:
+        for cb in self.on_move_info_callbacks:
             try:
-                self.on_move_info()
+                cb()
             except Exception as e:
                 self._emit_log(f"on_move_info handler error: {e}")
 

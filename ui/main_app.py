@@ -1,10 +1,12 @@
 # ui/main_app.py
+import threading
 from typing import Optional
 
 import gi
 
 from ggo.game_tree import get_name_and_version_from_toml_path
 from ui.analysys_box import AnalysisBox
+from ui.controller_katago import KatagoController
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gdk
@@ -18,6 +20,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.plus_page: Optional[Gtk.Box] = None
         self.set_default_size(1200, 800)
 
+        self.init_katago_controller()
         # Notebook
         self.notebook = Gtk.Notebook()
         self._creating_tab = False
@@ -134,6 +137,20 @@ class MainWindow(Gtk.ApplicationWindow):
         page_num = self.notebook.page_num(page_widget)
         if page_num != -1:
             self.notebook.remove_page(page_num)
+            if isinstance(page_widget, AnalysisBox):
+                page_widget.controller.unsubscribe_from_log_and_info_move()
+
+    def init_katago_controller(self):
+        # prepare cfg only on first creation; subsequent calls ignore cfg
+        cfg = {
+            "binary_path": "/opt/KataGo/cpp/katago",  # замените на реальный путь или настройку UI
+            "start_option": "gtp",
+            # "model_file": None,
+            # "threads": 4,
+            # "extra_args": []
+            "config_file": "/home/user/katago/gtp_example.cfg",
+        }
+        kc = KatagoController.get_instance(cfg)
 
 
 class App(Gtk.Application):
